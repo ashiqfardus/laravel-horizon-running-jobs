@@ -330,22 +330,79 @@ Create a simple Blade component:
 </div>
 ```
 
-### Embedding in Horizon Dashboard
+### Option 5: Standalone Dashboard Page (Recommended)
 
-To add a "Running Jobs" tab to the existing Horizon dashboard, you'll need to extend Horizon's Vue components. Here's how:
+Create a dedicated page that matches Horizon's dark theme:
 
-1. **Publish Horizon's assets:**
-   ```bash
-   php artisan horizon:publish
-   ```
+**1. Create a route:**
 
-2. **Create a custom component** in `resources/js/components/RunningJobs.vue`
+```php
+// routes/web.php
+Route::get('/horizon/running', function () {
+    return view('horizon.running-jobs');
+})->middleware(['web', 'auth']); // Add your auth middleware
+```
 
-3. **Register the route** in Horizon's router (requires modifying `vendor/laravel/horizon/resources/js/routes.js`)
+**2. Create the view:**
 
-4. **Add navigation link** to Horizon's layout
+```blade
+{{-- resources/views/horizon/running-jobs.blade.php --}}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Running Jobs - Horizon</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e; 
+            color: #fff; 
+            min-height: 100vh;
+        }
+        .nav { 
+            background: #16162a; 
+            padding: 16px 24px; 
+            display: flex; 
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #2a2a4a;
+        }
+        .nav h1 { font-size: 18px; font-weight: 600; }
+        .nav a { color: #6366f1; text-decoration: none; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+        #running-jobs-widget { margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <nav class="nav">
+        <h1>🔄 Running Jobs</h1>
+        <a href="/horizon">← Back to Horizon</a>
+    </nav>
+    
+    <div class="container">
+        <div id="running-jobs-widget"></div>
+    </div>
 
-> **Note:** Since Horizon's frontend is compiled, significant customization requires forking or extending Horizon's Vue application.
+    <script src="/vendor/horizon-running-jobs/widget.js"></script>
+    <script>
+        HorizonRunningJobs.init({
+            container: '#running-jobs-widget',
+            apiUrl: '/api/horizon/running-jobs',
+            refreshInterval: 3000,
+            showAllServers: true
+        });
+    </script>
+</body>
+</html>
+```
+
+**3. Access at:** `http://your-app.com/horizon/running`
+
+This gives you a dedicated running jobs page accessible from Horizon's dashboard via a simple link.
+
+> **Note:** Direct integration into Horizon's compiled Vue dashboard requires forking the Horizon package, which is not recommended as it complicates upgrades.
 
 ---
 
@@ -466,7 +523,7 @@ Please see [CONTRIBUTING](CONTRIBUTING.md) for details.
 
 ## Security
 
-If you discover any security-related issues, please email ashiqfardus@example.com instead of using the issue tracker.
+If you discover any security-related issues, please email ashiqfardus@hotmail.com instead of using the issue tracker.
 
 ---
 
