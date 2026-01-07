@@ -67,12 +67,24 @@ php artisan horizon:running-jobs
 
 If you have **multiple application servers** sharing a Redis instance, enable distributed mode and add the trait to your jobs:
 
+**Step 1:** Publish and edit the config:
+
 ```php
 // config/horizon-running-jobs.php
+
 'distributed' => true,  // Enable server filtering
+
+// Option A: Use hostname (default) - works if each server has unique hostname
+'server_identifier' => null,
+
+// Option B: Use static name - useful when hostnames aren't unique
+'server_identifier' => 'server-01',
+
+// Option C: Use environment variable
+'server_identifier' => env('HORIZON_SERVER_ID', gethostname()),
 ```
 
-Then add the `TracksServer` trait to your job classes:
+**Step 2:** Add the `TracksServer` trait to your job classes:
 
 ```php
 <?php

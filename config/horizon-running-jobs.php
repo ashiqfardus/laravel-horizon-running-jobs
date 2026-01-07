@@ -10,11 +10,27 @@ return [
     | shared Redis instance. When false, server filtering is disabled and
     | all running jobs are shown regardless of which server processes them.
     |
-    | - true: Filter jobs by server hostname (distributed setup)
+    | - true: Filter jobs by server identifier (distributed setup)
     | - false: Show all jobs without server filtering (single server setup)
     |
     */
     'distributed' => false,
+
+    /*
+    |--------------------------------------------------------------------------
+    | Server Identifier
+    |--------------------------------------------------------------------------
+    |
+    | The identifier for this server. Used in distributed mode to track
+    | which server is processing each job.
+    |
+    | Options:
+    | - null: Uses gethostname() automatically
+    | - 'server-01': Static string identifier
+    | - You can also use env('HORIZON_SERVER_ID', gethostname())
+    |
+    */
+    'server_identifier' => null,
 
     /*
     |--------------------------------------------------------------------------

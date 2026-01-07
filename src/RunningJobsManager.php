@@ -18,17 +18,17 @@ class RunningJobsManager
     /**
      * Get all running jobs.
      *
-     * @param string|null $hostname Filter by hostname (null = current host)
+     * @param string|null $serverId Filter by server identifier (null = current server)
      * @param bool $showAll Show jobs from all servers
      * @param array|null $queues Specific queues to check
      * @return array
      */
     public function getRunningJobs(
-        ?string $hostname = null,
+        ?string $serverId = null,
         bool $showAll = false,
         ?array $queues = null
     ): array {
-        $hostname = $hostname ?? gethostname();
+        $serverId = $serverId ?? $this->getServerIdentifier();
         $queues = $queues ?? $this->getDefaultQueues();
 
         // If not in distributed mode, always show all jobs
@@ -38,15 +38,15 @@ class RunningJobsManager
 
         // Use caching if enabled
         if ($this->config['cache']['enabled'] ?? false) {
-            $cacheKey = $this->getCacheKey($hostname, $showAll, $queues);
+            $cacheKey = $this->getCacheKey($serverId, $showAll, $queues);
             $ttl = $this->config['cache']['ttl'] ?? 10;
 
-            return Cache::remember($cacheKey, $ttl, function () use ($hostname, $showAll, $queues) {
-                return $this->fetchRunningJobs($hostname, $showAll, $queues);
+            return Cache::remember($cacheKey, $ttl, function () use ($serverId, $showAll, $queues) {
+                return $this->fetchRunningJobs($serverId, $showAll, $queues);
             });
         }
 
-        return $this->fetchRunningJobs($hostname, $showAll, $queues);
+        return $this->fetchRunningJobs($serverId, $showAll, $queues);
     }
 
     /**
@@ -55,6 +55,14 @@ class RunningJobsManager
     public function isDistributed(): bool
     {
         return $this->config['distributed'] ?? false;
+    }
+
+    /**
+     * Get the server identifier for this server.
+     */
+    public function getServerIdentifier(): string
+    {
+        return $this->config['server_identifier'] ?? gethostname();
     }
 
     /**

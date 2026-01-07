@@ -24,7 +24,7 @@ namespace Ashiqfardus\HorizonRunningJobs\Traits;
 trait TracksServer
 {
     /**
-     * The hostname of the server that created/processes this job.
+     * The identifier of the server that created/processes this job.
      */
     public string $supervisor_id;
 
@@ -34,7 +34,15 @@ trait TracksServer
      */
     public function initializeServerTracking(): void
     {
-        $this->supervisor_id = gethostname();
+        $this->supervisor_id = $this->getServerIdentifier();
+    }
+
+    /**
+     * Get the server identifier from config or fallback to hostname.
+     */
+    protected function getServerIdentifier(): string
+    {
+        return config('horizon-running-jobs.server_identifier') ?? gethostname();
     }
 
     /**
@@ -47,7 +55,7 @@ trait TracksServer
     public function tags(): array
     {
         return [
-            'server:' . gethostname(),
+            'server:' . $this->getServerIdentifier(),
             'environment:' . app()->environment(),
             'type:' . class_basename($this),
         ];
