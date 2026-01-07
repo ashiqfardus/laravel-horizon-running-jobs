@@ -67,41 +67,37 @@ php artisan horizon:running-jobs
 
 If you have **multiple application servers** sharing a Redis instance, enable distributed mode:
 
-**Step 1:** Publish and edit the config:
-
 ```php
 // config/horizon-running-jobs.php
-
-'distributed' => true,  // Enable server filtering
+'distributed' => true,
 ```
 
-**Server Identifier:** The package automatically detects your server identifier from Horizon's config:
+**That's it!** The package automatically reads the supervisor key from your `horizon.php`:
 
 ```php
-// If your horizon.php uses gethostname() like this:
+// config/horizon.php
+
+// Example 1: Using gethostname()
 'defaults' => [
-    gethostname() => [   // ← Package auto-detects this!
-        'connection' => 'redis',
-        'queue' => ['default'],
+    gethostname() => [...]  // Package detects: 'your-server-hostname'
+],
+
+// Example 2: Using static names
+'defaults' => [
+    'server-01' => [...]    // Package detects: 'server-01'
+],
+
+// Example 3: Environment-based
+'environments' => [
+    'production' => [
+        'worker-1' => [...]  // Package detects: 'worker-1'
     ],
 ],
 ```
 
-The package checks `horizon.defaults` and `horizon.environments` for keys matching `gethostname()`. If found, it uses that automatically.
+The package checks `horizon.environments.{current_env}` first, then falls back to `horizon.defaults`.
 
-**Manual override (optional):** If you use static names in Horizon config:
-
-```php
-// config/horizon-running-jobs.php
-
-// Option A: Static name (must match your horizon.php supervisor key)
-'server_identifier' => 'server-01',
-
-// Option B: Environment variable
-'server_identifier' => env('HORIZON_SERVER_ID'),
-```
-
-**Step 2:** Add the `TracksServer` trait to your job classes:
+**Then** add the `TracksServer` trait to your job classes:
 
 ```php
 <?php

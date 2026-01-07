@@ -59,7 +59,7 @@ class RunningJobsManager
 
     /**
      * Get the server identifier for this server.
-     * Auto-detects from Horizon config if not explicitly set.
+     * Auto-detects from Horizon config.
      */
     public function getServerIdentifier(): string
     {
@@ -68,41 +68,23 @@ class RunningJobsManager
             return $this->config['server_identifier'];
         }
 
-        // Try to auto-detect from Horizon config
-        return $this->detectServerIdentifierFromHorizon();
-    }
-
-    /**
-     * Detect server identifier from Horizon configuration.
-     * Checks if current hostname matches any supervisor key in Horizon config.
-     */
-    protected function detectServerIdentifierFromHorizon(): string
-    {
-        $hostname = gethostname();
-
-        // Check horizon.defaults for matching key
-        $defaults = config('horizon.defaults', []);
-        if (array_key_exists($hostname, $defaults)) {
-            return $hostname;
-        }
-
-        // Check horizon.environments.{current_env} for matching key
+        // Get from Horizon config - check current environment first
         $currentEnv = app()->environment();
-        $envConfig = config("horizon.environments.{$currentEnv}", []);
-        if (array_key_exists($hostname, $envConfig)) {
-            return $hostname;
+        $envSupervisors = config("horizon.environments.{$currentEnv}", []);
+
+        if (!empty($envSupervisors)) {
+            // Return the first supervisor key for current environment
+            return array_key_first($envSupervisors);
         }
 
-        // Check all environments for matching key
-        $environments = config('horizon.environments', []);
-        foreach ($environments as $env => $supervisors) {
-            if (array_key_exists($hostname, $supervisors)) {
-                return $hostname;
-            }
+        // Fallback to defaults
+        $defaults = config('horizon.defaults', []);
+        if (!empty($defaults)) {
+            return array_key_first($defaults);
         }
 
-        // Fallback to hostname
-        return $hostname;
+        // Ultimate fallback
+        return gethostname();
     }
 
     /**

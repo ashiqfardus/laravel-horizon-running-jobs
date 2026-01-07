@@ -38,7 +38,8 @@ trait TracksServer
     }
 
     /**
-     * Get the server identifier from config or auto-detect from Horizon.
+     * Get the server identifier.
+     * Uses the first supervisor key from Horizon config that matches current environment.
      */
     protected function getServerIdentifier(): string
     {
@@ -48,24 +49,23 @@ trait TracksServer
             return $configured;
         }
 
-        // Auto-detect from Horizon config
-        $hostname = gethostname();
-
-        // Check if hostname is used as supervisor key in horizon.defaults
-        $defaults = config('horizon.defaults', []);
-        if (array_key_exists($hostname, $defaults)) {
-            return $hostname;
-        }
-
-        // Check horizon.environments.{current_env}
+        // Get from Horizon config - check current environment first
         $currentEnv = app()->environment();
-        $envConfig = config("horizon.environments.{$currentEnv}", []);
-        if (array_key_exists($hostname, $envConfig)) {
-            return $hostname;
+        $envSupervisors = config("horizon.environments.{$currentEnv}", []);
+
+        if (!empty($envSupervisors)) {
+            // Return the first supervisor key for current environment
+            return array_key_first($envSupervisors);
         }
 
-        // Fallback to hostname
-        return $hostname;
+        // Fallback to defaults
+        $defaults = config('horizon.defaults', []);
+        if (!empty($defaults)) {
+            return array_key_first($defaults);
+        }
+
+        // Ultimate fallback
+        return gethostname();
     }
 
     /**

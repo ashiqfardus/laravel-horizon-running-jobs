@@ -21,15 +21,22 @@ return [
     | Server Identifier
     |--------------------------------------------------------------------------
     |
-    | The identifier for this server. Used in distributed mode to track
-    | which server is processing each job.
+    | The identifier for this server in distributed mode.
     |
-    | Options:
-    | - null: Auto-detect from Horizon config (recommended)
-    |         First checks horizon.defaults keys, then horizon.environments
-    |         Falls back to gethostname() if not found
-    | - 'server-01': Static string identifier
-    | - env('HORIZON_SERVER_ID'): Use environment variable
+    | When set to null (default), the package automatically reads the
+    | supervisor key from your horizon.php config:
+    |
+    | - First checks: horizon.environments.{current_env}
+    | - Then checks: horizon.defaults
+    |
+    | Examples from your horizon.php that will be auto-detected:
+    |
+    | 'defaults' => [
+    |     'supervisor-1' => [...],      // Auto-detected as 'supervisor-1'
+    |     gethostname() => [...],       // Auto-detected as the hostname
+    | ],
+    |
+    | Only set this manually if you need to override the Horizon config.
     |
     */
     'server_identifier' => null,
