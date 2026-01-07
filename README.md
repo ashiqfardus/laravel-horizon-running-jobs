@@ -338,15 +338,17 @@ Create a dedicated page that matches Horizon's dark theme:
 
 ```php
 // routes/web.php
-Route::get('/horizon/running', function () {
-    return view('horizon.running-jobs');
-})->middleware(['web', 'auth']); // Add your auth middleware
+Route::get('/running-jobs', function () {
+    return view('running-jobs');
+})->middleware(['web']); // Add your auth middleware
 ```
+
+> **Important:** Do NOT use `/horizon/*` path as it conflicts with Horizon's routes.
 
 **2. Create the view:**
 
 ```blade
-{{-- resources/views/horizon/running-jobs.blade.php --}}
+{{-- resources/views/running-jobs.blade.php --}}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -398,9 +400,11 @@ Route::get('/horizon/running', function () {
 </html>
 ```
 
-**3. Access at:** `http://your-app.com/horizon/running`
+**3. Access at:** `http://your-app.com/running-jobs`
 
-This gives you a dedicated running jobs page accessible from Horizon's dashboard via a simple link.
+**4. (Optional) Add a link in Horizon dashboard:**
+
+You can add a custom link to your running jobs page by publishing Horizon's views and modifying them, or simply bookmark the `/running-jobs` URL.
 
 > **Note:** Direct integration into Horizon's compiled Vue dashboard requires forking the Horizon package, which is not recommended as it complicates upgrades.
 
