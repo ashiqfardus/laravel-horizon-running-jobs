@@ -72,30 +72,63 @@ If you have **multiple application servers** sharing a Redis instance, enable di
 'distributed' => true,
 ```
 
-**That's it!** The package automatically reads the supervisor key from your `horizon.php`:
+**Server identification depends on your `horizon.php` setup:**
+
+##### Option A: Using `gethostname()` (Auto-detected ✅)
+
+If your `horizon.php` uses `gethostname()` as the supervisor key:
 
 ```php
 // config/horizon.php
-
-// Example 1: Using gethostname()
 'defaults' => [
-    gethostname() => [...]  // Package detects: 'your-server-hostname'
-],
-
-// Example 2: Using static names
-'defaults' => [
-    'server-01' => [...]    // Package detects: 'server-01'
-],
-
-// Example 3: Environment-based
-'environments' => [
-    'production' => [
-        'worker-1' => [...]  // Package detects: 'worker-1'
+    gethostname() => [  // Each server has unique hostname
+        'connection' => 'redis',
+        'queue' => ['default'],
     ],
 ],
 ```
 
-The package checks `horizon.environments.{current_env}` first, then falls back to `horizon.defaults`.
+**No additional configuration needed** — each server automatically identifies itself by its hostname.
+
+##### Option B: Using Static Names (Manual config required)
+
+If your `horizon.php` uses static supervisor names:
+
+```php
+// config/horizon.php
+'defaults' => [
+    'supervisor-01' => [...],  // For Server 1
+    'supervisor-02' => [...],  // For Server 2
+],
+```
+
+You **must** tell each server which supervisor it is:
+
+```php
+// On Server 1: config/horizon-running-jobs.php
+'server_identifier' => 'supervisor-01',
+
+// On Server 2: config/horizon-running-jobs.php  
+'server_identifier' => 'supervisor-02',
+```
+
+**Or use an environment variable** (recommended for deployment):
+
+```php
+// config/horizon-running-jobs.php
+'server_identifier' => env('HORIZON_SUPERVISOR_NAME'),
+```
+
+Then set in `.env` on each server:
+```bash
+# Server 1
+HORIZON_SUPERVISOR_NAME=supervisor-01
+
+# Server 2
+HORIZON_SUPERVISOR_NAME=supervisor-02
+```
+
+---
 
 **Then** add the `TracksServer` trait to your job classes:
 

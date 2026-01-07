@@ -23,20 +23,23 @@ return [
     |
     | The identifier for this server in distributed mode.
     |
-    | When set to null (default), the package automatically reads the
-    | supervisor key from your horizon.php config:
+    | Auto-detection (null): Works when your horizon.php uses gethostname():
+    |   'defaults' => [
+    |       gethostname() => [...],  // Each server has unique hostname
+    |   ]
     |
-    | - First checks: horizon.environments.{current_env}
-    | - Then checks: horizon.defaults
+    | Manual configuration: Required when using static supervisor names:
+    |   'defaults' => [
+    |       'supervisor-01' => [...],  // Server 1
+    |       'supervisor-02' => [...],  // Server 2
+    |   ]
     |
-    | Examples from your horizon.php that will be auto-detected:
+    |   In this case, set on each server:
+    |   - Server 1: 'server_identifier' => 'supervisor-01'
+    |   - Server 2: 'server_identifier' => 'supervisor-02'
     |
-    | 'defaults' => [
-    |     'supervisor-1' => [...],      // Auto-detected as 'supervisor-1'
-    |     gethostname() => [...],       // Auto-detected as the hostname
-    | ],
-    |
-    | Only set this manually if you need to override the Horizon config.
+    |   Or use environment variable:
+    |   'server_identifier' => env('HORIZON_SUPERVISOR_NAME')
     |
     */
     'server_identifier' => null,
