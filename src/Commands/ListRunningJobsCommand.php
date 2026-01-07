@@ -31,6 +31,12 @@ class ListRunningJobsCommand extends Command
             $limit = min((int) $this->option('limit'), config('horizon-running-jobs.max_jobs', 1000));
             $asJson = $this->option('json');
             $showStats = $this->option('stats');
+            $isDistributed = $this->manager->isDistributed();
+
+            // In non-distributed mode, always show all
+            if (!$isDistributed) {
+                $showAll = true;
+            }
 
             // Check if Horizon is running
             if (!$this->isHorizonRunning()) {
@@ -57,6 +63,7 @@ class ListRunningJobsCommand extends Command
             if ($asJson) {
                 $this->line(json_encode([
                     'hostname' => $hostname,
+                    'distributed' => $isDistributed,
                     'show_all' => $showAll,
                     'queues' => $queues,
                     'running_jobs_count' => count($result['jobs']),
@@ -68,16 +75,21 @@ class ListRunningJobsCommand extends Command
 
             // Display header
             $this->info("🔍 Scanning queues: " . implode(', ', $queues));
-            $this->info("📍 Current host: {$hostname}");
-            if ($showAll) {
-                $this->info("🌐 Showing jobs from ALL servers");
+            if ($isDistributed) {
+                $this->info("📍 Current host: {$hostname}");
+                if ($showAll) {
+                    $this->info("🌐 Showing jobs from ALL servers");
+                }
             }
             $this->newLine();
 
             $jobs = $result['jobs'];
 
             if (empty($jobs)) {
-                $this->info("✓ No jobs currently running" . ($showAll ? "" : " on {$hostname}"));
+                $message = $isDistributed && !$showAll
+                    ? "✓ No jobs currently running on {$hostname}"
+                    : "✓ No jobs currently running";
+                $this->info($message);
                 return self::SUCCESS;
             }
 

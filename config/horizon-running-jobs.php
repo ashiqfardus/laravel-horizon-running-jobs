@@ -3,6 +3,21 @@
 return [
     /*
     |--------------------------------------------------------------------------
+    | Distributed Mode
+    |--------------------------------------------------------------------------
+    |
+    | Set to true if you have multiple application servers connected to a
+    | shared Redis instance. When false, server filtering is disabled and
+    | all running jobs are shown regardless of which server processes them.
+    |
+    | - true: Filter jobs by server hostname (distributed setup)
+    | - false: Show all jobs without server filtering (single server setup)
+    |
+    */
+    'distributed' => false,
+
+    /*
+    |--------------------------------------------------------------------------
     | Default Queues
     |--------------------------------------------------------------------------
     |

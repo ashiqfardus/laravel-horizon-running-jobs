@@ -4,9 +4,9 @@
 [![Total Downloads](https://img.shields.io/packagist/dt/ashiqfardus/horizon-running-jobs.svg?style=flat-square)](https://packagist.org/packages/ashiqfardus/horizon-running-jobs)
 [![License](https://img.shields.io/packagist/l/ashiqfardus/horizon-running-jobs.svg?style=flat-square)](https://packagist.org/packages/ashiqfardus/horizon-running-jobs)
 
-**Monitor currently running jobs in Laravel Horizon for distributed systems.**
+**Monitor currently running jobs in Laravel Horizon.**
 
-Laravel Horizon shows pending, completed, and failed jobs—but not what's **currently running**. This package fills that gap, especially for distributed systems where multiple servers share a Redis queue.
+Laravel Horizon shows pending, completed, and failed jobs—but not what's **currently running**. This package fills that gap for both single-server and distributed multi-server setups.
 
 ---
 
@@ -15,10 +15,9 @@ Laravel Horizon shows pending, completed, and failed jobs—but not what's **cur
 - 🔍 **Real-time Monitoring** - See jobs as they execute
 - 🖥️ **CLI Command** - `php artisan horizon:running-jobs`
 - 🌐 **HTTP API** - JSON endpoint for dashboards
-- 🏢 **Multi-Server Support** - Filter by specific server or view all
+- 🏢 **Multi-Server Support** - Filter by specific server or view all (distributed mode)
 - ⏱️ **Duration Tracking** - See how long each job has been running
 - 📊 **Statistics** - Aggregate stats by server, queue, and job class
-- 🏷️ **Hybrid Identification** - Uses tags + property fallback for reliability
 - 💾 **Response Caching** - Configurable caching for high-traffic APIs
 
 ---
@@ -42,13 +41,38 @@ Laravel Horizon shows pending, completed, and failed jobs—but not what's **cur
 composer require ashiqfardus/horizon-running-jobs
 ```
 
-### Step 2: Publish Configuration (Optional)
+### Step 2: Publish Configuration
 
 ```bash
 php artisan vendor:publish --tag=horizon-running-jobs-config
 ```
 
-### Step 3: Add Trait to Your Jobs
+### Step 3: Choose Your Setup
+
+#### 🖥️ Single Server Setup (Default)
+
+If you have **one application server** with Redis on the same or separate machine, no additional configuration is needed. The package works out of the box:
+
+```php
+// config/horizon-running-jobs.php
+'distributed' => false,  // Default - shows all running jobs
+```
+
+**That's it!** Just run:
+```bash
+php artisan horizon:running-jobs
+```
+
+#### 🌐 Distributed Setup (Multiple Servers)
+
+If you have **multiple application servers** sharing a Redis instance, enable distributed mode and add the trait to your jobs:
+
+```php
+// config/horizon-running-jobs.php
+'distributed' => true,  // Enable server filtering
+```
+
+Then add the `TracksServer` trait to your job classes:
 
 ```php
 <?php
@@ -77,6 +101,15 @@ class YourJob implements ShouldQueue
         // Your job logic
     }
 }
+```
+
+This allows filtering jobs by server:
+```bash
+# Show jobs on current server only
+php artisan horizon:running-jobs
+
+# Show jobs from all servers
+php artisan horizon:running-jobs --all
 ```
 
 That's it! 🎉

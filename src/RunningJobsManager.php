@@ -31,6 +31,11 @@ class RunningJobsManager
         $hostname = $hostname ?? gethostname();
         $queues = $queues ?? $this->getDefaultQueues();
 
+        // If not in distributed mode, always show all jobs
+        if (!$this->isDistributed()) {
+            $showAll = true;
+        }
+
         // Use caching if enabled
         if ($this->config['cache']['enabled'] ?? false) {
             $cacheKey = $this->getCacheKey($hostname, $showAll, $queues);
@@ -42,6 +47,14 @@ class RunningJobsManager
         }
 
         return $this->fetchRunningJobs($hostname, $showAll, $queues);
+    }
+
+    /**
+     * Check if running in distributed mode.
+     */
+    public function isDistributed(): bool
+    {
+        return $this->config['distributed'] ?? false;
     }
 
     /**
