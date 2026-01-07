@@ -59,10 +59,50 @@ class RunningJobsManager
 
     /**
      * Get the server identifier for this server.
+     * Auto-detects from Horizon config if not explicitly set.
      */
     public function getServerIdentifier(): string
     {
-        return $this->config['server_identifier'] ?? gethostname();
+        // If explicitly configured, use that
+        if (!empty($this->config['server_identifier'])) {
+            return $this->config['server_identifier'];
+        }
+
+        // Try to auto-detect from Horizon config
+        return $this->detectServerIdentifierFromHorizon();
+    }
+
+    /**
+     * Detect server identifier from Horizon configuration.
+     * Checks if current hostname matches any supervisor key in Horizon config.
+     */
+    protected function detectServerIdentifierFromHorizon(): string
+    {
+        $hostname = gethostname();
+
+        // Check horizon.defaults for matching key
+        $defaults = config('horizon.defaults', []);
+        if (array_key_exists($hostname, $defaults)) {
+            return $hostname;
+        }
+
+        // Check horizon.environments.{current_env} for matching key
+        $currentEnv = app()->environment();
+        $envConfig = config("horizon.environments.{$currentEnv}", []);
+        if (array_key_exists($hostname, $envConfig)) {
+            return $hostname;
+        }
+
+        // Check all environments for matching key
+        $environments = config('horizon.environments', []);
+        foreach ($environments as $env => $supervisors) {
+            if (array_key_exists($hostname, $supervisors)) {
+                return $hostname;
+            }
+        }
+
+        // Fallback to hostname
+        return $hostname;
     }
 
     /**

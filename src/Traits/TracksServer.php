@@ -38,11 +38,34 @@ trait TracksServer
     }
 
     /**
-     * Get the server identifier from config or fallback to hostname.
+     * Get the server identifier from config or auto-detect from Horizon.
      */
     protected function getServerIdentifier(): string
     {
-        return config('horizon-running-jobs.server_identifier') ?? gethostname();
+        // If explicitly configured in package config, use that
+        $configured = config('horizon-running-jobs.server_identifier');
+        if (!empty($configured)) {
+            return $configured;
+        }
+
+        // Auto-detect from Horizon config
+        $hostname = gethostname();
+
+        // Check if hostname is used as supervisor key in horizon.defaults
+        $defaults = config('horizon.defaults', []);
+        if (array_key_exists($hostname, $defaults)) {
+            return $hostname;
+        }
+
+        // Check horizon.environments.{current_env}
+        $currentEnv = app()->environment();
+        $envConfig = config("horizon.environments.{$currentEnv}", []);
+        if (array_key_exists($hostname, $envConfig)) {
+            return $hostname;
+        }
+
+        // Fallback to hostname
+        return $hostname;
     }
 
     /**

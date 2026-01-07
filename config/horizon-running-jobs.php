@@ -25,9 +25,11 @@ return [
     | which server is processing each job.
     |
     | Options:
-    | - null: Uses gethostname() automatically
+    | - null: Auto-detect from Horizon config (recommended)
+    |         First checks horizon.defaults keys, then horizon.environments
+    |         Falls back to gethostname() if not found
     | - 'server-01': Static string identifier
-    | - You can also use env('HORIZON_SERVER_ID', gethostname())
+    | - env('HORIZON_SERVER_ID'): Use environment variable
     |
     */
     'server_identifier' => null,
