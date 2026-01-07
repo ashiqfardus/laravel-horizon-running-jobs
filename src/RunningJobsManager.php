@@ -238,19 +238,42 @@ class RunningJobsManager
      */
     protected function getDefaultQueues(): array
     {
-        // Check config first
+        // Check package config first
         if (!empty($this->config['queues'])) {
             return $this->config['queues'];
         }
 
-        // Try to get from Horizon config
-        $supervisor = config('horizon.defaults.' . gethostname(), []);
+        // Try to get from Horizon config - check multiple possible structures
+        $queues = [];
 
+        // Method 1: Check defaults.{hostname} (distributed setup)
+        $supervisor = config('horizon.defaults.' . gethostname(), []);
         if (!empty($supervisor['queue'])) {
             return (array) $supervisor['queue'];
         }
 
-        return ['default'];
+        // Method 2: Check all supervisors in defaults and collect queues
+        $defaults = config('horizon.defaults', []);
+        foreach ($defaults as $name => $settings) {
+            if (!empty($settings['queue'])) {
+                $queues = array_merge($queues, (array) $settings['queue']);
+            }
+        }
+
+        // Method 3: Check environments (production, local, etc.)
+        $environments = config('horizon.environments', []);
+        foreach ($environments as $env => $supervisors) {
+            foreach ($supervisors as $name => $settings) {
+                if (!empty($settings['queue'])) {
+                    $queues = array_merge($queues, (array) $settings['queue']);
+                }
+            }
+        }
+
+        // Return unique queues or default
+        $queues = array_unique($queues);
+
+        return !empty($queues) ? array_values($queues) : ['default'];
     }
 
     /**
