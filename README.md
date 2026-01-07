@@ -1,8 +1,8 @@
 # Laravel Horizon Running Jobs
 
-[![Latest Version on Packagist](https://img.shields.io/packagist/v/your-vendor/horizon-running-jobs.svg?style=flat-square)](https://packagist.org/packages/your-vendor/horizon-running-jobs)
-[![Total Downloads](https://img.shields.io/packagist/dt/your-vendor/horizon-running-jobs.svg?style=flat-square)](https://packagist.org/packages/your-vendor/horizon-running-jobs)
-[![License](https://img.shields.io/packagist/l/your-vendor/horizon-running-jobs.svg?style=flat-square)](https://packagist.org/packages/your-vendor/horizon-running-jobs)
+[![Latest Version on Packagist](https://img.shields.io/packagist/v/your-vendor/horizon-running-jobs.svg?style=flat-square)](https://packagist.org/packages/ashiqfardus/horizon-running-jobs)
+[![Total Downloads](https://img.shields.io/packagist/dt/your-vendor/horizon-running-jobs.svg?style=flat-square)](https://packagist.org/packages/ashiqfardus/horizon-running-jobs)
+[![License](https://img.shields.io/packagist/l/your-vendor/horizon-running-jobs.svg?style=flat-square)](https://packagist.org/packages/ashiqfardus/horizon-running-jobs)
 
 **Monitor currently running jobs in Laravel Horizon for distributed systems.**
 
