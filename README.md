@@ -1,8 +1,8 @@
 # Laravel Horizon Running Jobs
 
-[![Latest Version on Packagist](https://img.shields.io/packagist/v/your-vendor/horizon-running-jobs.svg?style=flat-square)](https://packagist.org/packages/ashiqfardus/horizon-running-jobs)
-[![Total Downloads](https://img.shields.io/packagist/dt/your-vendor/horizon-running-jobs.svg?style=flat-square)](https://packagist.org/packages/ashiqfardus/horizon-running-jobs)
-[![License](https://img.shields.io/packagist/l/your-vendor/horizon-running-jobs.svg?style=flat-square)](https://packagist.org/packages/ashiqfardus/horizon-running-jobs)
+[![Latest Version on Packagist](https://img.shields.io/packagist/v/ashiqfardus/horizon-running-jobs.svg?style=flat-square)](https://packagist.org/packages/ashiqfardus/horizon-running-jobs)
+[![Total Downloads](https://img.shields.io/packagist/dt/ashiqfardus/horizon-running-jobs.svg?style=flat-square)](https://packagist.org/packages/ashiqfardus/horizon-running-jobs)
+[![License](https://img.shields.io/packagist/l/ashiqfardus/horizon-running-jobs.svg?style=flat-square)](https://packagist.org/packages/ashiqfardus/horizon-running-jobs)
 
 **Monitor currently running jobs in Laravel Horizon for distributed systems.**
 
@@ -60,7 +60,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Bus\Queueable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use YourVendor\HorizonRunningJobs\Traits\TracksServer;
+use Ashiqfardus\HorizonRunningJobs\Traits\TracksServer;
 
 class YourJob implements ShouldQueue
 {
