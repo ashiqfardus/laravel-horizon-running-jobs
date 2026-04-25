@@ -2,9 +2,8 @@
 
 namespace Ashiqfardus\HorizonRunningJobs\Commands;
 
-use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Artisan;
 use Ashiqfardus\HorizonRunningJobs\RunningJobsManager;
+use Illuminate\Console\Command;
 
 class ListRunningJobsCommand extends Command
 {
@@ -39,7 +38,7 @@ class ListRunningJobsCommand extends Command
             }
 
             // Check if Horizon is running
-            if (!$this->isHorizonRunning()) {
+            if (!$this->manager->isHorizonRunning()) {
                 $this->warn('⚠️  Horizon is not running. No jobs will be listed.');
                 return self::FAILURE;
             }
@@ -260,20 +259,6 @@ class ListRunningJobsCommand extends Command
         $queues = array_unique($queues);
 
         return !empty($queues) ? array_values($queues) : ['default'];
-    }
-
-    /**
-     * Check if Horizon is running.
-     */
-    protected function isHorizonRunning(): bool
-    {
-        try {
-            Artisan::call('horizon:status');
-            $output = trim(Artisan::output());
-            return str_contains($output, 'Horizon is running');
-        } catch (\Exception $e) {
-            return false;
-        }
     }
 
     /**

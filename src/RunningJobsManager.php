@@ -58,6 +58,23 @@ class RunningJobsManager
     }
 
     /**
+     * Whether Horizon's master process is currently running. Determined by
+     * shelling out to `horizon:status` and matching the standard "Horizon
+     * is running" output. Override this in a subclass / spy for tests.
+     */
+    public function isHorizonRunning(): bool
+    {
+        try {
+            \Illuminate\Support\Facades\Artisan::call('horizon:status');
+            $output = trim((string) \Illuminate\Support\Facades\Artisan::output());
+
+            return str_contains($output, 'Horizon is running');
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    /**
      * Get the server identifier for this server.
      * Auto-detects from Horizon config.
      */
