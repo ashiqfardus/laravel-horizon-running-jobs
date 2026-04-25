@@ -11,3 +11,8 @@ composer.lock
 .claude
 PROGRESS.md
 
+# Personal promotional assets — not part of the package distribution.
+# Real documentation / screenshots referenced from README can still be
+# committed under /docs/ explicitly.
+/docs/*-linkedin.*
+
