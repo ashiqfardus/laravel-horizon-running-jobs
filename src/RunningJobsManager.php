@@ -471,9 +471,16 @@ class RunningJobsManager
 
         $this->liveSupervisorsQueried = true;
 
+        // Apply the grace window so we don't flap orphan-status between
+        // heartbeats: a supervisor whose registration expired N seconds ago
+        // (where N <= grace) is still considered live.
+        $grace = (int) ($this->config['supervisor_stale_grace_seconds']
+            ?? config('horizon-running-jobs.supervisor_stale_grace_seconds', 5));
+        $cutoff = time() - max(0, $grace);
+
         try {
             $names = $this->getHorizonRedisConnection()
-                ->zrangebyscore('supervisors', time(), '+inf');
+                ->zrangebyscore('supervisors', $cutoff, '+inf');
 
             $this->liveSupervisorNames = is_array($names) ? array_values($names) : [];
         } catch (\Throwable) {

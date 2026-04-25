@@ -40,7 +40,7 @@ class AssetController extends Controller
             200,
             [
                 'Content-Type' => self::ASSETS[$file]['mime'],
-                'Cache-Control' => 'public, max-age=300',
+                'Cache-Control' => 'no-cache, must-revalidate',
             ]
         );
     }

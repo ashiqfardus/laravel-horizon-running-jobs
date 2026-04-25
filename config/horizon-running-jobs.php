@@ -122,6 +122,30 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Supervisor Stale-Check Grace Window
+    |--------------------------------------------------------------------------
+    |
+    | Horizon's master refreshes each supervisor's heartbeat in Redis every
+    | few seconds. Between heartbeats, a perfectly healthy supervisor's
+    | expiry score can be a fraction of a second in the past. A binary
+    | now > expires_at check would flap between "running" and "stale" with
+    | every poll, which is operationally noisy.
+    |
+    | This setting defines the grace window (in seconds): a supervisor is
+    | only flagged stale if its score is in the past by MORE than this many
+    | seconds. The same window applies to the orphan-detection lookup
+    | (RunningJobsManager::getLiveSupervisorNames), so a job's worker is
+    | only "gone" once its supervisor has been silent for longer than the
+    | grace window.
+    |
+    | Defaults to 5 seconds — large enough to absorb normal heartbeat
+    | jitter, small enough that real failures surface quickly.
+    |
+    */
+    'supervisor_stale_grace_seconds' => 5,
+
+    /*
+    |--------------------------------------------------------------------------
     | UI Dashboard
     |--------------------------------------------------------------------------
     |

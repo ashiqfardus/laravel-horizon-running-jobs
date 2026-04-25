@@ -47,7 +47,7 @@
                             <th>Server</th>
                             <th>Status</th>
                             <th>Duration</th>
-                            @if($allowRelease)<th></th>@endif
+                            @if($allowRelease)<th>Action</th>@endif
                         </tr>
                     </thead>
                     <tbody>
@@ -80,16 +80,13 @@
                                 @if($allowRelease)
                                     <td>
                                         @if($canRelease)
-                                            <div x-data="hrjReleaseButton({ url: '{{ $releaseUrl }}', jobId: '{{ $rowKey }}' })">
-                                                <button
-                                                    type="button"
-                                                    class="hrj-btn"
-                                                    @click="release()"
-                                                    :disabled="busy"
-                                                    :aria-busy="busy"
-                                                    x-text="busy ? 'releasing…' : 'release'"
-                                                >release</button>
-                                            </div>
+                                            <button
+                                                type="button"
+                                                class="hrj-btn hrj-btn--release"
+                                                x-data="hrjReleaseButton({ url: '{{ $releaseUrl }}', jobId: '{{ $rowKey }}' })"
+                                                @click="release()"
+                                                :disabled="busy"
+                                            >release</button>
                                         @endif
                                     </td>
                                 @endif

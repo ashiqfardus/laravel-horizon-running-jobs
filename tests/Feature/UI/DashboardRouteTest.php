@@ -33,13 +33,23 @@ class DashboardRouteTest extends TestCase
             ->assertSee('name="csrf-token"', false);
     }
 
-    public function test_dashboard_links_to_package_css_and_js(): void
+    public function test_dashboard_links_to_package_css_and_inlines_alpine_factories(): void
     {
         $response = $this->get('/horizon/queue-monitor');
         $response->assertOk();
 
-        $this->assertStringContainsString('horizon-running-jobs.css', $response->getContent());
-        $this->assertStringContainsString('horizon-running-jobs.js', $response->getContent());
+        $body = $response->getContent();
+
+        // CSS is loaded via the package's asset route.
+        $this->assertStringContainsString('horizon-running-jobs.css', $body);
+
+        // JS factories are inlined into the standalone dashboard page so they
+        // resolve under any host setup (Herd HTTPS, custom routing, asset
+        // proxying) without depending on the route + asset endpoint serving
+        // them in time. Embedders linking the package JS still get the
+        // external file via the asset route (see the asset route test below).
+        $this->assertStringContainsString('window.hrjPanel = hrjPanel', $body);
+        $this->assertStringContainsString('window.hrjReleaseButton = hrjReleaseButton', $body);
     }
 
     public function test_dashboard_blocked_in_production_without_auth_callback(): void

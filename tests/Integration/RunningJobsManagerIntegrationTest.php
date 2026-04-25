@@ -158,6 +158,25 @@ class RunningJobsManagerIntegrationTest extends IntegrationTestCase
         );
     }
 
+    public function test_supervisor_within_grace_window_does_not_flap_orphan_status(): void
+    {
+        // Score is 2 seconds in the past — within the default 5s grace window.
+        // A healthy Horizon between heartbeats can land here briefly. The
+        // dashboard should keep treating the worker as live so the orphan
+        // panel doesn't flicker.
+        $this->redis()->zadd('supervisors', time() - 2, 'master-1:web-01');
+
+        $this->seedReservedJob('default', $this->makePayload([
+            'uuid' => 'jitter-job',
+            'tags' => ['server:web-01'],
+        ]));
+
+        $result = $this->manager()->getRunningJobs(null, true, ['default']);
+
+        $this->assertSame(0, $result['orphan_count']);
+        $this->assertFalse($result['jobs'][0]['is_orphaned']);
+    }
+
     public function test_orphaned_only_filter_excludes_healthy_jobs(): void
     {
         // One healthy supervisor, one tagged job for it (healthy), one tagged

@@ -49,6 +49,16 @@ class SupervisorInspector
     }
 
     /**
+     * Grace window (seconds) before a supervisor is flagged stale. Absorbs
+     * normal heartbeat jitter so the dashboard doesn't flap between
+     * "running" and "stale" with every poll.
+     */
+    protected function staleGraceSeconds(): int
+    {
+        return (int) config('horizon-running-jobs.supervisor_stale_grace_seconds', 5);
+    }
+
+    /**
      * @return array<string, int>  member name → expiry timestamp
      */
     protected function readExpiries(string $zsetKey): array
@@ -74,9 +84,10 @@ class SupervisorInspector
             ->keyBy('name')
             ->all();
 
+        $grace = $this->staleGraceSeconds();
         $rows = [];
         foreach ($expiries as $name => $expiresAt) {
-            $isStale = $now > $expiresAt;
+            $isStale = $now > ($expiresAt + $grace);
             $entry = $live[$name] ?? null;
 
             $rows[] = [
@@ -106,9 +117,10 @@ class SupervisorInspector
             ->keyBy('name')
             ->all();
 
+        $grace = $this->staleGraceSeconds();
         $rows = [];
         foreach ($expiries as $name => $expiresAt) {
-            $isStale = $now > $expiresAt;
+            $isStale = $now > ($expiresAt + $grace);
             $entry = $live[$name] ?? null;
 
             $rows[] = [

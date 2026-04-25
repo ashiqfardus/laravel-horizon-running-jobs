@@ -185,6 +185,30 @@
     margin: 2px 0 0;
 }
 
+.hrj-banner__list {
+    margin: 6px 0 0;
+    padding: 0;
+    list-style: none;
+    color: var(--hrj-text-muted);
+    font-size: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.hrj-banner__list li {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.hrj-banner__check {
+    font-family: var(--hrj-font-mono);
+    color: var(--hrj-text);
+    flex: 0 0 auto;
+    min-width: 140px;
+}
+
 .hrj-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -233,10 +257,39 @@
     border-color: var(--hrj-color-fail);
 }
 
+.hrj-btn--release {
+    color: var(--hrj-color-info) !important;
+    border-color: var(--hrj-color-info);
+    background: transparent;
+    font-weight: 600;
+    min-width: 70px;
+    min-height: 26px;
+    justify-content: center;
+    text-transform: lowercase;
+    letter-spacing: 0.02em;
+    line-height: 1;
+}
+
+/* Defensive: ensure button text never inherits transparent or zero-size from
+   a host application's reset stylesheet. */
+.hrj-btn,
+.hrj-btn * {
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.hrj-btn--release:hover {
+    background: color-mix(in srgb, var(--hrj-color-info) 12%, transparent);
+}
+
 .hrj-btn[disabled],
 .hrj-btn[aria-busy="true"] {
     opacity: 0.6;
     cursor: not-allowed;
+}
+
+[x-cloak] {
+    display: none !important;
 }
 
 .hrj-toast {

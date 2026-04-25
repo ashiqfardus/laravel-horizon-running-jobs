@@ -33,11 +33,14 @@
         <div style="flex: 1;">
             <p class="hrj-banner__title">{{ $title }}</p>
             @if(! empty($issues))
-                <p class="hrj-banner__desc">
-                    @foreach($issues as $i => $issue)
-                        <span>{{ $issue['name'] }}: {{ $issue['message'] }}</span>{{ $i < count($issues) - 1 ? ' • ' : '' }}
+                <ul class="hrj-banner__list">
+                    @foreach($issues as $issue)
+                        <li>
+                            <span class="hrj-banner__check">{{ $issue['name'] }}</span>
+                            {{ $issue['message'] }}
+                        </li>
                     @endforeach
-                </p>
+                </ul>
             @endif
         </div>
         <span class="hrj-badge hrj-badge--{{ $overall }}">{{ strtoupper($overall) }}</span>
