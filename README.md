@@ -199,6 +199,22 @@ php artisan horizon:running-jobs --json
 php artisan horizon:running-jobs --stats
 ```
 
+#### Example Output
+
+```
+🔍 Scanning queues: default
+📍 Current server: app-server-01
+
++----------+------------------------+----------+---------------+---------+----------+----------+----------+
+| ID       | Job                    | Queue    | Server        | Status  | Started  | Duration | Attempts |
++----------+------------------------+----------+---------------+---------+----------+----------+----------+
+| 4b5ecc82 | App\Jobs\ProcessOrder  | default  | app-server-01 | running | 14:30:15 | 2m 34s   | 1        |
+| 8a2b3c4d | App\Jobs\SendEmail     | emails   | app-server-01 | running | 14:31:42 | 45s      | 1        |
++----------+------------------------+----------+---------------+---------+----------+----------+----------+
+
+✓ Found 2 running job(s)
+```
+
 ### Inspecting supervisors and master processes
 
 ```bash
@@ -212,7 +228,7 @@ php artisan horizon:supervisors --masters
 php artisan horizon:supervisors --json
 ```
 
-#### Example output
+#### Supervisors example output
 
 ```
 +-----------------------------------+---------+------+------------------------+-------+---------+
@@ -225,23 +241,14 @@ php artisan horizon:supervisors --json
 ⚠ 1 supervisor(s) past their expiry — workers may have died without cleanup.
 ```
 
-`Expires` is the time until the registration lapses if the supervisor stops pinging. A supervisor whose registration has already expired but has not yet been reaped is marked `⚠ stale` — usually a sign that the worker process died.
+#### How `Expires` and `⚠ stale` work
 
-#### Example Output
+Horizon keeps each supervisor and master process registered in a Redis sorted set. Every few seconds the running process refreshes its registration with a new expiry timestamp roughly **90 seconds in the future** (Horizon's default heartbeat window).
 
-```
-🔍 Scanning queues: default
-📍 Current host: app-server-01
+- `Expires: 67s` — registration is healthy; the supervisor is checking in normally.
+- `Expires: OVERDUE 12s` and `⚠ stale` — the registration's expiry has passed in real time but Horizon's master process hasn't reaped the entry yet. With Horizon's default heartbeat, this means the supervisor hasn't pinged for **at least 90 seconds**, which usually indicates the worker process died (OOM, SIGKILL, lost connection).
 
-+----------+------------------------+----------+---------------+----------+----------+----------+
-| ID       | Job                    | Queue    | Server        | Started  | Duration | Attempts |
-+----------+------------------------+----------+---------------+----------+----------+----------+
-| 4b5ecc82 | App\Jobs\ProcessOrder  | default  | app-server-01 | 14:30:15 | 2m 34s   | 1        |
-| 8a2b3c4d | App\Jobs\SendEmail     | emails   | app-server-01 | 14:31:42 | 45s      | 1        |
-+----------+------------------------+----------+---------------+----------+----------+----------+
-
-✓ Found 2 running job(s)
-```
+If you adjust Horizon's heartbeat window in `config/horizon.php`, the threshold for "stale" shifts with it.
 
 ### HTTP API
 
@@ -305,6 +312,60 @@ GET /api/horizon/supervisors
 | `jobs[].status` | `"running"` (reservation valid) or `"zombie"` (reservation expired, still in queue) |
 | `jobs[].start_time` / `start_timestamp` | **actual reservation time** (not the Redis expiry score) |
 | `warnings[]` | human-readable summary lines — long-running, zombie count, dropped count |
+
+#### Example Response — `GET /api/horizon/supervisors`
+
+```json
+{
+  "success": true,
+  "inspected_at": 1745576846,
+  "supervisor_count": 2,
+  "master_count": 1,
+  "stale_supervisor_count": 0,
+  "supervisors": [
+    {
+      "name": "supervisor-01:app-01.example.com",
+      "status": "running",
+      "master": "supervisor-01",
+      "pid": 8298,
+      "queues": ["default", "emails", "reports"],
+      "process_count": 3,
+      "processes": {
+        "redis:default": 1,
+        "redis:emails": 1,
+        "redis:reports": 1
+      },
+      "expires_at": 1745576906,
+      "seconds_until_expiry": 60,
+      "is_stale": false
+    },
+    {
+      "name": "supervisor-02:app-02.example.com",
+      "status": "running",
+      "master": "supervisor-02",
+      "pid": 4521,
+      "queues": ["default", "emails", "reports"],
+      "process_count": 3,
+      "processes": {"redis:default": 1, "redis:emails": 1, "redis:reports": 1},
+      "expires_at": 1745576919,
+      "seconds_until_expiry": 73,
+      "is_stale": false
+    }
+  ],
+  "masters": [
+    {
+      "name": "supervisor-01",
+      "status": "running",
+      "environment": "production",
+      "pid": 8283,
+      "supervisor_count": 1,
+      "expires_at": 1745576901,
+      "seconds_until_expiry": 55,
+      "is_stale": false
+    }
+  ]
+}
+```
 
 ### Using the Facade
 
