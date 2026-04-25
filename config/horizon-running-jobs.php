@@ -103,7 +103,10 @@ return [
     'routes' => [
         'enabled' => true,
         'prefix' => 'api',
-        'middleware' => ['api'], // Add 'auth:sanctum' for authentication
+        // 'throttle:60,1' caps any caller to 60 requests/minute. Production
+        // access is gated separately by the bundled Authorize middleware
+        // (see HorizonRunningJobs::auth() in your AppServiceProvider).
+        'middleware' => ['api', 'throttle:60,1'],
         'uri' => 'horizon/running-jobs',
     ],
 
