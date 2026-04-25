@@ -6,6 +6,8 @@ All notable changes to `horizon-running-jobs` will be documented in this file.
 
 ### Added
 
+- `php artisan horizon:supervisors` — inspect every Horizon supervisor and master process registered in Redis across the whole deployment. Surfaces name, status (running / paused / stale), assigned master, pid, queues, worker process count, expiry, and an `is_stale` flag for entries whose registration expired but have not been reaped. `--masters` adds the master table; `--json` emits the raw payload.
+- `GET /api/horizon/supervisors` — JSON equivalent of the CLI command, with summary counts (`supervisor_count`, `master_count`, `stale_supervisor_count`). Gated by the same `Authorize` middleware as the rest of the API.
 - Laravel 13 support. PHP floor raised to 8.1.
 - `HorizonRunningJobs::auth($callback)` for registering an authorization closure. The callback receives the `Illuminate\Http\Request` and returns a boolean. Smart defaults: `local` and `testing` environments are always allowed; outside those, the callback decides; without a callback the request is denied with a 403 whose body explains how to register one.
 - `Http\Middleware\Authorize` is appended to the API route group's middleware unconditionally so the gate runs even when the user customizes the middleware list.

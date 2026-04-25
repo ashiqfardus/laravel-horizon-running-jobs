@@ -199,6 +199,34 @@ php artisan horizon:running-jobs --json
 php artisan horizon:running-jobs --stats
 ```
 
+### Inspecting supervisors and master processes
+
+```bash
+# List every Horizon supervisor registered in Redis (across all instances)
+php artisan horizon:supervisors
+
+# Include the master process table
+php artisan horizon:supervisors --masters
+
+# Raw JSON for scripting
+php artisan horizon:supervisors --json
+```
+
+#### Example output
+
+```
++-----------------------------------+---------+------+------------------------+-------+---------+
+| Name                              | Status  | PID  | Queues                 | Procs | Expires |
++-----------------------------------+---------+------+------------------------+-------+---------+
+| supervisor-01:app-01.example.com  | running | 8298 | default,emails,reports | 3     | 67s     |
+| supervisor-02:app-02.example.com  | running | 4521 | default,emails,reports | 3     | 73s     |
+| supervisor-03:app-03.example.com  | ⚠ stale | -    | -                      | 0     | OVERDUE 12s |
++-----------------------------------+---------+------+------------------------+-------+---------+
+⚠ 1 supervisor(s) past their expiry — workers may have died without cleanup.
+```
+
+`Expires` is the time until the registration lapses if the supervisor stops pinging. A supervisor whose registration has already expired but has not yet been reaped is marked `⚠ stale` — usually a sign that the worker process died.
+
 #### Example Output
 
 ```
@@ -231,6 +259,9 @@ GET /api/horizon/running-jobs?queues=emails,reports
 
 # Get statistics
 GET /api/horizon/running-jobs/stats
+
+# Inspect supervisors and masters
+GET /api/horizon/supervisors
 ```
 
 #### Example Response
