@@ -79,6 +79,65 @@ class ListSupervisorsCommandTest extends TestCase
         $this->assertStringContainsString('No supervisors registered', $output);
     }
 
+    public function test_paused_status_renders_with_pause_marker(): void
+    {
+        $this->bindInspector($this->payload(supervisors: [
+            $this->supervisorRow('paused-worker', 'paused', 999, ['default'], 0, isStale: false),
+        ]));
+
+        Artisan::call('horizon:supervisors');
+        $output = Artisan::output();
+
+        $this->assertStringContainsString('⏸ paused', $output);
+    }
+
+    public function test_long_supervisor_name_is_truncated(): void
+    {
+        $this->bindInspector($this->payload(supervisors: [
+            $this->supervisorRow(
+                'this-is-a-really-long-supervisor-name-that-exceeds-the-truncation-limit',
+                'running', 1, ['default'], 1, isStale: false
+            ),
+        ]));
+
+        Artisan::call('horizon:supervisors');
+        $output = Artisan::output();
+
+        $this->assertStringContainsString('...', $output);
+    }
+
+    public function test_masters_empty_state_when_masters_flag_used(): void
+    {
+        $this->bindInspector($this->payload(
+            supervisors: [
+                $this->supervisorRow('worker-1', 'running', 1, ['default'], 1, isStale: false),
+            ],
+            masters: []
+        ));
+
+        Artisan::call('horizon:supervisors', ['--masters' => true]);
+        $output = Artisan::output();
+
+        $this->assertStringContainsString('No master processes registered', $output);
+    }
+
+    public function test_multiple_supervisors_renders_all_rows(): void
+    {
+        $this->bindInspector($this->payload(supervisors: [
+            $this->supervisorRow('worker-A', 'running', 100, ['default'], 1, isStale: false),
+            $this->supervisorRow('worker-B', 'running', 200, ['emails'], 2, isStale: false),
+            $this->supervisorRow('worker-C', 'paused', 300, ['reports'], 0, isStale: false),
+        ]));
+
+        Artisan::call('horizon:supervisors');
+        $output = Artisan::output();
+
+        $this->assertStringContainsString('worker-A', $output);
+        $this->assertStringContainsString('worker-B', $output);
+        $this->assertStringContainsString('worker-C', $output);
+        $this->assertStringContainsString('⏸ paused', $output);
+    }
+
     private function bindInspector(array $payload): void
     {
         $fake = new FakeInspector;

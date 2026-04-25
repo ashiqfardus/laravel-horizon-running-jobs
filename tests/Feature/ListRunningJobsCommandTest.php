@@ -77,6 +77,81 @@ class ListRunningJobsCommandTest extends TestCase
         $this->assertStringContainsString('"truncated": false', $output);
     }
 
+    public function test_empty_state_message_when_no_jobs_running(): void
+    {
+        $this->bindManager(new SpyManager);
+
+        Artisan::call('horizon:running-jobs');
+        $output = Artisan::output();
+
+        $this->assertStringContainsString('No jobs currently running', $output);
+    }
+
+    public function test_human_output_shows_x_of_y_when_truncated(): void
+    {
+        $jobs = [];
+        for ($i = 1; $i <= 50; $i++) {
+            $jobs[] = $this->job("uuid-{$i}", 'App\\Jobs\\Job', 'default', 'web-01', 'running', $i);
+        }
+
+        $this->bindManager(new SpyManager(jobs: $jobs, totalCount: 50));
+
+        Artisan::call('horizon:running-jobs', ['--limit' => 5]);
+        $output = Artisan::output();
+
+        $this->assertStringContainsString('Showing 5 of 50 running job(s)', $output);
+    }
+
+    public function test_human_output_shows_simple_count_when_not_truncated(): void
+    {
+        $this->bindManager(new SpyManager(jobs: [
+            $this->job('id-1', 'App\\Jobs\\Foo', 'default', 'web-01', 'running', 1),
+            $this->job('id-2', 'App\\Jobs\\Foo', 'default', 'web-01', 'running', 2),
+        ]));
+
+        Artisan::call('horizon:running-jobs');
+        $output = Artisan::output();
+
+        $this->assertStringContainsString('Found 2 running job(s)', $output);
+        $this->assertStringNotContainsString('Showing', $output);
+    }
+
+    public function test_zombie_status_renders_in_human_table(): void
+    {
+        $this->bindManager(new SpyManager(jobs: [
+            $this->job('zombie-1', 'App\\Jobs\\Stuck', 'reports', 'web-01', 'zombie', 120),
+        ], warnings: ['1 zombie job(s) detected (reservation expired but still in queue)']));
+
+        Artisan::call('horizon:running-jobs');
+        $output = Artisan::output();
+
+        $this->assertStringContainsString('zombie', $output);
+        $this->assertStringContainsString('zombie job(s) detected', $output);
+    }
+
+    public function test_long_job_class_is_truncated_in_table(): void
+    {
+        $this->bindManager(new SpyManager(jobs: [
+            $this->job('id-1', 'App\\Jobs\\ThisIsAReallyLongJobClassNameThatExceedsTheTruncationLimit', 'default', 'web-01', 'running', 1),
+        ]));
+
+        Artisan::call('horizon:running-jobs');
+        $output = Artisan::output();
+
+        // Truncate() limit is 35 chars and appends "...".
+        $this->assertStringContainsString('...', $output);
+    }
+
+    public function test_queue_option_filters_to_specified_queues(): void
+    {
+        $spy = new SpyManager(jobs: []);
+        $this->bindManager($spy);
+
+        Artisan::call('horizon:running-jobs', ['--queue' => ['emails', 'reports']]);
+
+        $this->assertSame(['emails', 'reports'], $spy->capturedQueues);
+    }
+
     private function bindManager(SpyManager $manager): void
     {
         $this->app->instance(RunningJobsManager::class, $manager);
@@ -103,6 +178,8 @@ class ListRunningJobsCommandTest extends TestCase
 
 class SpyManager extends RunningJobsManager
 {
+    public ?array $capturedQueues = null;
+
     public function __construct(
         public array $jobs = [],
         public array $warnings = [],
@@ -120,6 +197,8 @@ class SpyManager extends RunningJobsManager
 
     public function getRunningJobs(?string $serverId = null, bool $showAll = false, ?array $queues = null): array
     {
+        $this->capturedQueues = $queues;
+
         return [
             'jobs' => $this->jobs,
             'warnings' => $this->warnings,
