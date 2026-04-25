@@ -1,5 +1,6 @@
 <?php
 
+use Ashiqfardus\HorizonRunningJobs\Controllers\QueuesController;
 use Ashiqfardus\HorizonRunningJobs\Controllers\RunningJobsController;
 use Ashiqfardus\HorizonRunningJobs\Controllers\SupervisorsController;
 use Ashiqfardus\HorizonRunningJobs\Http\Middleware\Authorize;
@@ -28,5 +29,8 @@ Route::group([
 
     Route::get('horizon/supervisors', [SupervisorsController::class, 'index'])
         ->name('horizon.supervisors.index');
+
+    Route::get('horizon/queues', [QueuesController::class, 'index'])
+        ->name('horizon.queues.index');
 });
 

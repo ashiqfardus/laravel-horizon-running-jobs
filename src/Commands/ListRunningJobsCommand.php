@@ -2,18 +2,22 @@
 
 namespace Ashiqfardus\HorizonRunningJobs\Commands;
 
+use Ashiqfardus\HorizonRunningJobs\Concerns\IsWatchable;
 use Ashiqfardus\HorizonRunningJobs\RunningJobsManager;
 use Illuminate\Console\Command;
 
 class ListRunningJobsCommand extends Command
 {
+    use IsWatchable;
+
     protected $signature = 'horizon:running-jobs
                             {--queue=* : Specific queues to monitor (default: from horizon config)}
                             {--limit=100 : Maximum jobs to display}
                             {--all : Show jobs from all servers}
                             {--orphaned : Restrict to orphaned jobs (worker process is no longer registered)}
                             {--json : Output as JSON}
-                            {--stats : Show statistics instead of job list}';
+                            {--stats : Show statistics instead of job list}
+                            {--watch= : Re-render every N seconds (default 3, Ctrl-C to exit). Ignored with --json.}';
 
     protected $description = 'List jobs currently running in Horizon';
 
@@ -24,6 +28,15 @@ class ListRunningJobsCommand extends Command
     }
 
     public function handle(): int
+    {
+        if ($this->isWatchMode() && ! $this->option('json')) {
+            return $this->runInWatchMode(fn () => $this->renderOnce());
+        }
+
+        return $this->renderOnce();
+    }
+
+    protected function renderOnce(): int
     {
         try {
             $serverId = $this->manager->getServerIdentifier();

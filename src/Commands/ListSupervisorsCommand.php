@@ -2,18 +2,31 @@
 
 namespace Ashiqfardus\HorizonRunningJobs\Commands;
 
+use Ashiqfardus\HorizonRunningJobs\Concerns\IsWatchable;
 use Ashiqfardus\HorizonRunningJobs\SupervisorInspector;
 use Illuminate\Console\Command;
 
 class ListSupervisorsCommand extends Command
 {
+    use IsWatchable;
+
     protected $signature = 'horizon:supervisors
                             {--json : Output as JSON}
-                            {--masters : Include the master process table}';
+                            {--masters : Include the master process table}
+                            {--watch= : Re-render every N seconds (default 3, Ctrl-C to exit). Ignored with --json.}';
 
     protected $description = 'Inspect every Horizon supervisor (and optionally master) registered in Redis';
 
     public function handle(SupervisorInspector $inspector): int
+    {
+        if ($this->isWatchMode() && ! $this->option('json')) {
+            return $this->runInWatchMode(fn () => $this->renderOnce($inspector));
+        }
+
+        return $this->renderOnce($inspector);
+    }
+
+    protected function renderOnce(SupervisorInspector $inspector): int
     {
         $result = $inspector->inspect();
 

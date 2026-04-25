@@ -17,6 +17,7 @@ class RouteRegistrationTest extends TestCase
             'running-jobs index' => ['horizon.running-jobs.index'],
             'running-jobs stats' => ['horizon.running-jobs.stats'],
             'supervisors index' => ['horizon.supervisors.index'],
+            'queues index' => ['horizon.queues.index'],
         ];
     }
 
@@ -68,5 +69,12 @@ class RouteRegistrationTest extends TestCase
         $route = Route::getRoutes()->getByName('horizon.supervisors.index');
 
         $this->assertSame('api/horizon/supervisors', $route->uri());
+    }
+
+    public function test_queues_route_uri_is_horizon_queues(): void
+    {
+        $route = Route::getRoutes()->getByName('horizon.queues.index');
+
+        $this->assertSame('api/horizon/queues', $route->uri());
     }
 }

@@ -45,6 +45,8 @@ class HorizonRunningJobsServiceProvider extends ServiceProvider
             $this->commands([
                 Commands\ListRunningJobsCommand::class,
                 Commands\ListSupervisorsCommand::class,
+                Commands\ListQueueDepthsCommand::class,
+                Commands\DiagnoseCommand::class,
             ]);
         }
 

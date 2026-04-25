@@ -202,6 +202,36 @@ class ListRunningJobsCommandTest extends TestCase
         $this->assertStringContainsString('"orphan_count":', $output);
     }
 
+    public function test_watch_mode_invokes_manager_for_each_iteration(): void
+    {
+        $spy = new SpyManager(jobs: [$this->job('a', 'X', 'default', 'web-01', 'running', 1)]);
+        $this->bindManager($spy);
+
+        config([
+            'horizon-running-jobs.test_hooks.watch_iteration_limit' => 4,
+            'horizon-running-jobs.test_hooks.watch_sleep_override' => 0,
+        ]);
+
+        Artisan::call('horizon:running-jobs', ['--watch' => 1]);
+
+        $this->assertSame(4, $spy->getRunningJobsCallCount);
+    }
+
+    public function test_watch_mode_skipped_when_json_flag_set(): void
+    {
+        $spy = new SpyManager;
+        $this->bindManager($spy);
+
+        config([
+            'horizon-running-jobs.test_hooks.watch_iteration_limit' => 4,
+            'horizon-running-jobs.test_hooks.watch_sleep_override' => 0,
+        ]);
+
+        Artisan::call('horizon:running-jobs', ['--watch' => 1, '--json' => true]);
+
+        $this->assertSame(1, $spy->getRunningJobsCallCount);
+    }
+
     private function bindManager(SpyManager $manager): void
     {
         $this->app->instance(RunningJobsManager::class, $manager);
@@ -230,6 +260,7 @@ class SpyManager extends RunningJobsManager
 {
     public ?array $capturedQueues = null;
     public bool $capturedOrphanedOnly = false;
+    public int $getRunningJobsCallCount = 0;
 
     public function __construct(
         public array $jobs = [],
@@ -250,6 +281,7 @@ class SpyManager extends RunningJobsManager
     {
         $this->capturedQueues = $queues;
         $this->capturedOrphanedOnly = $orphanedOnly;
+        $this->getRunningJobsCallCount++;
 
         return [
             'jobs' => $this->jobs,

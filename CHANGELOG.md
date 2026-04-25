@@ -8,11 +8,18 @@ All notable changes to `horizon-running-jobs` will be documented in this file.
 
 - `php artisan horizon:supervisors` — inspect every Horizon supervisor and master process registered in Redis across the whole deployment. Surfaces name, status (running / paused / stale), assigned master, pid, queues, worker process count, expiry, and an `is_stale` flag for entries whose registration expired but have not been reaped. `--masters` adds the master table; `--json` emits the raw payload.
 - `GET /api/horizon/supervisors` — JSON equivalent of the CLI command, with summary counts (`supervisor_count`, `master_count`, `stale_supervisor_count`). Gated by the same `Authorize` middleware as the rest of the API.
+- `php artisan horizon:queues` — show pending, reserved, and delayed counts per queue plus an aggregate total row. `--queue=` repeats to limit to specific queues, `--json` emits the raw payload.
+- `GET /api/horizon/queues` — JSON equivalent: per-queue breakdown plus aggregate `totals` and `queue_count`. Same `?queues=` filter and validation rules as the running-jobs endpoint.
+- `--watch=N` flag on `horizon:running-jobs`, `horizon:queues`, and `horizon:supervisors` — re-renders the table every N seconds (default 3). Press Ctrl-C to exit. Ignored when `--json` is set.
+- `php artisan horizon:diagnose` — unified health check across supervisors, jobs, and queue depths. Each subcheck reports pass / warn / fail, the command exits non-zero on any fail (e.g. no live supervisor). `--json` emits a structured payload suitable for monitoring scripts.
 - Laravel 13 support. PHP floor raised to 8.1.
 - `HorizonRunningJobs::auth($callback)` for registering an authorization closure. The callback receives the `Illuminate\Http\Request` and returns a boolean. Smart defaults: `local` and `testing` environments are always allowed; outside those, the callback decides; without a callback the request is denied with a 403 whose body explains how to register one.
 - `Http\Middleware\Authorize` is appended to the API route group's middleware unconditionally so the gate runs even when the user customizes the middleware list.
 - `throttle:60,1` is included in the default route middleware to cap any caller to 60 requests per minute.
 - `?queues=` query-parameter validation. Each name must match `[A-Za-z0-9_:.-]+`, with a maximum of 20 names per request. Invalid input returns 422.
+- Orphan detection. Every job row now carries an `is_orphaned` boolean. A job is orphaned when the Horizon supervisor name embedded in its tags (`server:<name>`) is no longer present in Horizon's live supervisor set — meaning the worker that reserved the job is gone. The response root includes `orphan_count`, and the warnings list is updated when orphans are found.
+- `--orphaned` flag on `horizon:running-jobs` — shows only orphaned jobs. The HTTP API exposes the same filter via `?orphaned=true`.
+- `By Orphan Status` breakdown in `--stats` output.
 - `status` field on every job — `running` or `zombie`. A `zombie` is a reserved-set entry whose reservation has already expired (worker died mid-job, or Horizon has not reaped it yet). The warnings list includes a zombie count when any are present.
 - `dropped_count` on responses — number of malformed reserved-set entries that could not be parsed. Each drop is logged via `Log::warning` with the queue name and the underlying error.
 - CLI `Status` column showing per-row `running` / `⚠ zombie`.

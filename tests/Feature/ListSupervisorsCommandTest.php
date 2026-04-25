@@ -138,11 +138,28 @@ class ListSupervisorsCommandTest extends TestCase
         $this->assertStringContainsString('⏸ paused', $output);
     }
 
-    private function bindInspector(array $payload): void
+    public function test_watch_mode_invokes_inspector_for_each_iteration(): void
+    {
+        $fake = $this->bindInspector($this->payload(supervisors: [
+            $this->supervisorRow('worker-1', 'running', 100, ['default'], 1, isStale: false),
+        ]));
+
+        config([
+            'horizon-running-jobs.test_hooks.watch_iteration_limit' => 3,
+            'horizon-running-jobs.test_hooks.watch_sleep_override' => 0,
+        ]);
+
+        Artisan::call('horizon:supervisors', ['--watch' => 1]);
+
+        $this->assertSame(3, $fake->inspectCallCount);
+    }
+
+    private function bindInspector(array $payload): FakeInspector
     {
         $fake = new FakeInspector;
         $fake->payload = $payload;
         $this->app->instance(SupervisorInspector::class, $fake);
+        return $fake;
     }
 
     private function payload(array $supervisors = [], array $masters = []): array
@@ -172,6 +189,7 @@ class ListSupervisorsCommandTest extends TestCase
 class FakeInspector extends SupervisorInspector
 {
     public array $payload = ['supervisors' => [], 'masters' => [], 'inspected_at' => 0];
+    public int $inspectCallCount = 0;
 
     public function __construct()
     {
@@ -180,6 +198,7 @@ class FakeInspector extends SupervisorInspector
 
     public function inspect(): array
     {
+        $this->inspectCallCount++;
         return $this->payload;
     }
 }

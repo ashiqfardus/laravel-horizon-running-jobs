@@ -135,6 +135,29 @@ class RunningJobsManagerIntegrationTest extends IntegrationTestCase
         $this->assertFalse($result['jobs'][0]['is_orphaned']);
     }
 
+    public function test_job_marked_orphaned_when_supervisor_score_is_in_the_past(): void
+    {
+        // Real-world parallel: a Horizon master has died and stopped refreshing
+        // the supervisor's ZSET registration. The member is still in the set
+        // but its expiry score is in the past — `zrangebyscore(time(), '+inf')`
+        // must filter it out so the job is correctly flagged as orphan.
+        $this->redis()->zadd('supervisors', time() - 30, 'master-1:web-01');
+
+        $this->seedReservedJob('default', $this->makePayload([
+            'uuid' => 'stale-supervisor-job',
+            'tags' => ['server:web-01'],
+        ]));
+
+        $result = $this->manager()->getRunningJobs(null, true, ['default']);
+
+        $this->assertSame(1, $result['orphan_count']);
+        $this->assertTrue($result['jobs'][0]['is_orphaned']);
+        $this->assertContains(
+            '1 orphan job(s) detected (worker process is no longer registered)',
+            $result['warnings']
+        );
+    }
+
     public function test_orphaned_only_filter_excludes_healthy_jobs(): void
     {
         // One healthy supervisor, one tagged job for it (healthy), one tagged

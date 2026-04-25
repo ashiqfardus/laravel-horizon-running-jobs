@@ -197,7 +197,18 @@ php artisan horizon:running-jobs --json
 
 # Show statistics
 php artisan horizon:running-jobs --stats
+
+# Show only orphaned jobs (reserved but worker is gone)
+php artisan horizon:running-jobs --orphaned
+
+# Live-refresh the table every 3 seconds (Ctrl-C to exit)
+php artisan horizon:running-jobs --watch
+
+# Custom refresh interval (seconds)
+php artisan horizon:running-jobs --watch=5
 ```
+
+> `--watch` also works on `horizon:queues` and `horizon:supervisors`. Ignored when combined with `--json`.
 
 #### Example Output
 
@@ -214,6 +225,64 @@ php artisan horizon:running-jobs --stats
 
 ✓ Found 2 running job(s)
 ```
+
+### Diagnosing Horizon health
+
+```bash
+# Run a unified health check (supervisors, jobs, queues)
+php artisan horizon:diagnose
+
+# Machine-readable for monitoring scripts
+php artisan horizon:diagnose --json
+```
+
+Each check reports `pass`, `warn`, or `fail`. Exit codes: `0` on pass-or-warn, `1` on fail. The only fail condition is "no live Horizon supervisor" — everything else (orphans, zombies, malformed, deep queues) surfaces as a warning so the command stays usable in CI/cron health checks.
+
+```
+🔍 Horizon Health Diagnosis
+
+  ✓  horizon.supervisors    2 supervisor(s) running
+  ⚠  jobs.orphaned          1 orphan job(s) — see `horizon:running-jobs --orphaned`
+  ✓  jobs.zombies           0 zombie jobs
+  ✓  jobs.malformed         0 malformed entries
+  ✓  queues.depths          highest pending: emails (47), totals: pending=58 reserved=4 delayed=2
+
+Status: WARN
+```
+
+### Inspecting queue depths
+
+```bash
+# Pending / reserved / delayed counts per queue
+php artisan horizon:queues
+
+# Limit to specific queues (repeatable)
+php artisan horizon:queues --queue=emails --queue=reports
+
+# Raw JSON for scripting
+php artisan horizon:queues --json
+```
+
+#### Queue depth example output
+
+```
++---------+---------+----------+---------+-------+
+| Queue   | Pending | Reserved | Delayed | Total |
++---------+---------+----------+---------+-------+
+| default | 12      | 3        | 0       | 15    |
+| emails  | 4       | 1        | 2       | 7     |
+| reports | 0       | 0        | 0       | 0     |
++---------+---------+----------+---------+-------+
+| TOTAL   | 16      | 4        | 2       | 22    |
++---------+---------+----------+---------+-------+
+```
+
+#### What the columns mean
+
+- **`Pending`** — jobs waiting in `queues:<name>` (Redis list). These have not been picked up by a worker yet.
+- **`Reserved`** — jobs in `queues:<name>:reserved` (sorted set). These are currently being processed (or were, if the worker died — see `--orphaned`).
+- **`Delayed`** — jobs in `queues:<name>:delayed` (sorted set). These were dispatched with `delay()` and are scheduled to fire in the future.
+- **`Total`** — sum of the three. Useful for at-a-glance queue health.
 
 ### Inspecting supervisors and master processes
 
@@ -264,11 +333,20 @@ GET /api/horizon/running-jobs?all=true
 # Specific queues
 GET /api/horizon/running-jobs?queues=emails,reports
 
+# Show only orphaned jobs
+GET /api/horizon/running-jobs?orphaned=true
+
 # Get statistics
 GET /api/horizon/running-jobs/stats
 
 # Inspect supervisors and masters
 GET /api/horizon/supervisors
+
+# Per-queue depth (pending / reserved / delayed / total)
+GET /api/horizon/queues
+
+# Limit to specific queues
+GET /api/horizon/queues?queues=emails,reports
 ```
 
 #### Example Response
@@ -309,9 +387,12 @@ GET /api/horizon/supervisors
 | `running_jobs_count` | jobs returned in this payload (may be limited by `max_jobs`) |
 | `total_count` | total reserved-set entries found before truncation |
 | `dropped_count` | malformed reserved-set entries skipped; each is logged via `Log::warning` |
+| `orphan_count` | jobs whose tagged supervisor is no longer in Horizon's live supervisor set |
+| `orphaned_only` | echoes whether `?orphaned=true` was active for this request |
 | `jobs[].status` | `"running"` (reservation valid) or `"zombie"` (reservation expired, still in queue) |
+| `jobs[].is_orphaned` | `true` when the worker that reserved the job is no longer registered in Horizon |
 | `jobs[].start_time` / `start_timestamp` | **actual reservation time** (not the Redis expiry score) |
-| `warnings[]` | human-readable summary lines — long-running, zombie count, dropped count |
+| `warnings[]` | human-readable summary lines — long-running, zombie count, orphan count, dropped count |
 
 #### Example Response — `GET /api/horizon/supervisors`
 
@@ -363,6 +444,27 @@ GET /api/horizon/supervisors
       "seconds_until_expiry": 55,
       "is_stale": false
     }
+  ]
+}
+```
+
+#### Example Response — `GET /api/horizon/queues`
+
+```json
+{
+  "success": true,
+  "inspected_at": 1745576846,
+  "queue_count": 3,
+  "totals": {
+    "pending": 16,
+    "reserved": 4,
+    "delayed": 2,
+    "total": 22
+  },
+  "queues": [
+    {"queue": "default", "pending": 12, "reserved": 3, "delayed": 0, "total": 15},
+    {"queue": "emails",  "pending": 4,  "reserved": 1, "delayed": 2, "total": 7},
+    {"queue": "reports", "pending": 0,  "reserved": 0, "delayed": 0, "total": 0}
   ]
 }
 ```
@@ -430,14 +532,21 @@ return [
 ];
 ```
 
-### How `status` is decided
+### How `status` and `is_orphaned` are decided
 
-Each job in the response has a `status` field:
+Each job in the response carries a `status` field and an `is_orphaned` boolean — two independent signals:
 
-- `"running"` — the reservation's expiry is still in the future (normal).
-- `"zombie"` — the reservation has expired but the entry is still in `queues:<q>:reserved`. This usually means the worker processing the job died (OOM, SIGKILL) or Horizon hasn't reaped it yet. Warnings include a zombie count.
+**`status`** reflects the Redis reservation expiry:
 
-Previously these jobs were silently dropped from the response. They are now surfaced so operators can see them and release/retry them manually.
+- `"running"` — expiry is still in the future (normal).
+- `"zombie"` — the reservation has expired but the entry is still in `queues:<q>:reserved`. The worker processing the job likely died (OOM, SIGKILL) or Horizon hasn't reaped the entry yet.
+
+**`is_orphaned`** reflects Horizon's live supervisor registry:
+
+- `false` — the supervisor name in the job's `server:` tag appears in Horizon's `supervisors` sorted set.
+- `true` — no live supervisor matches the tag, meaning the worker process is no longer registered. The job is stuck: it won't be reaped by Horizon's supervisor loop, so it will stay reserved until the `retry_after` window expires and lands in the failed queue.
+
+The two states can combine — a job can be both a zombie (expired reservation) and orphaned (dead supervisor). The CLI Status column shows `⚠ orphan+zombie` in that case. Use `--orphaned` / `?orphaned=true` to filter to just the orphaned subset.
 
 ---
 
