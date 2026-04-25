@@ -41,11 +41,42 @@ class SupervisorsControllerTest extends TestCase
 
         $this->getJson('/api/horizon/supervisors')->assertStatus(403);
     }
+
+    public function test_response_includes_every_documented_field(): void
+    {
+        $this->app->instance(SupervisorInspector::class, new FakeSupervisorInspector);
+
+        $this->getJson('/api/horizon/supervisors')
+            ->assertOk()
+            ->assertJsonStructure([
+                'success',
+                'inspected_at',
+                'supervisor_count',
+                'master_count',
+                'stale_supervisor_count',
+                'supervisors',
+                'masters',
+            ]);
+    }
+
+    public function test_returns_500_when_inspector_throws(): void
+    {
+        $fake = new FakeSupervisorInspector;
+        $fake->throwOnInspect = new \RuntimeException('horizon connection unreachable');
+
+        $this->app->instance(SupervisorInspector::class, $fake);
+
+        $this->getJson('/api/horizon/supervisors')
+            ->assertStatus(500)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('error', 'Failed to inspect supervisors');
+    }
 }
 
 class FakeSupervisorInspector extends SupervisorInspector
 {
     public array $payload = ['supervisors' => [], 'masters' => [], 'inspected_at' => 0];
+    public ?\Throwable $throwOnInspect = null;
 
     public function __construct()
     {
@@ -54,6 +85,10 @@ class FakeSupervisorInspector extends SupervisorInspector
 
     public function inspect(): array
     {
+        if ($this->throwOnInspect) {
+            throw $this->throwOnInspect;
+        }
+
         return $this->payload;
     }
 }

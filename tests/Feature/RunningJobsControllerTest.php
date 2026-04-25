@@ -120,6 +120,96 @@ class RunningJobsControllerTest extends TestCase
             ->assertJsonPath('warnings.0', '7 malformed job(s) skipped (see logs)')
             ->assertJsonPath('total_count', 0);
     }
+
+    public function test_index_response_includes_every_documented_field(): void
+    {
+        $spy = new SpyRunningJobsManager(['distributed' => true, 'cache' => ['enabled' => false]]);
+        $spy->fakeServerId = 'worker-01';
+        $spy->fakeResult = [
+            'jobs' => [['job_id' => 'abc', 'job_class' => 'X', 'queue' => 'default', 'server' => 'worker-01', 'status' => 'running', 'start_time' => '2026-04-25T10:00:00+00:00', 'start_timestamp' => 1745576400, 'running_for_seconds' => 5, 'running_for_formatted' => '5s', 'attempts' => 1, 'timeout' => 60, 'tags' => []]],
+            'warnings' => [],
+            'total_count' => 1,
+            'dropped_count' => 0,
+        ];
+
+        $this->app->instance(RunningJobsManager::class, $spy);
+
+        $this->getJson('/api/horizon/running-jobs')
+            ->assertOk()
+            ->assertJsonStructure([
+                'success',
+                'hostname',
+                'timestamp',
+                'queues_monitored',
+                'running_jobs_count',
+                'total_count',
+                'dropped_count',
+                'jobs',
+                'warnings',
+            ])
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('hostname', 'worker-01')
+            ->assertJsonPath('running_jobs_count', 1);
+    }
+
+    public function test_queues_monitored_echoes_validated_user_input(): void
+    {
+        $spy = new SpyRunningJobsManager(['distributed' => true, 'cache' => ['enabled' => false]]);
+        $this->app->instance(RunningJobsManager::class, $spy);
+
+        $this->getJson('/api/horizon/running-jobs?queues=alpha,beta')
+            ->assertOk()
+            ->assertJsonPath('queues_monitored', ['alpha', 'beta']);
+    }
+
+    public function test_index_returns_500_when_manager_throws(): void
+    {
+        $spy = new SpyRunningJobsManager(['distributed' => true, 'cache' => ['enabled' => false]]);
+        $spy->throwOnGetRunningJobs = new \RuntimeException('redis is on fire');
+        $this->app->instance(RunningJobsManager::class, $spy);
+
+        $this->getJson('/api/horizon/running-jobs')
+            ->assertStatus(500)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('error', 'Failed to fetch running jobs');
+    }
+
+    public function test_stats_endpoint_returns_full_shape(): void
+    {
+        $spy = new SpyRunningJobsManager(['distributed' => true, 'cache' => ['enabled' => false]]);
+        $spy->fakeStats = [
+            'total_running' => 5,
+            'by_server' => ['worker-01' => 5],
+            'by_queue' => ['default' => 5],
+            'by_job_class' => ['App\\Jobs\\Foo' => 5],
+            'by_status' => ['running' => 4, 'zombie' => 1],
+            'dropped_count' => 0,
+            'longest_running' => null,
+            'warnings' => [],
+        ];
+        $this->app->instance(RunningJobsManager::class, $spy);
+
+        $this->getJson('/api/horizon/running-jobs/stats')
+            ->assertOk()
+            ->assertJsonStructure([
+                'success',
+                'timestamp',
+                'stats' => ['total_running', 'by_server', 'by_queue', 'by_job_class', 'by_status', 'dropped_count', 'longest_running', 'warnings'],
+            ])
+            ->assertJsonPath('stats.total_running', 5)
+            ->assertJsonPath('stats.by_status.zombie', 1);
+    }
+
+    public function test_stats_endpoint_returns_500_when_manager_throws(): void
+    {
+        $spy = new SpyRunningJobsManager(['distributed' => true, 'cache' => ['enabled' => false]]);
+        $spy->throwOnGetStats = new \RuntimeException('boom');
+        $this->app->instance(RunningJobsManager::class, $spy);
+
+        $this->getJson('/api/horizon/running-jobs/stats')
+            ->assertStatus(500)
+            ->assertJsonPath('error', 'Failed to fetch statistics');
+    }
 }
 
 class SpyRunningJobsManager extends RunningJobsManager
@@ -128,9 +218,16 @@ class SpyRunningJobsManager extends RunningJobsManager
     public string $fakeServerId = 'fake';
 
     public array $fakeResult = ['jobs' => [], 'warnings' => [], 'total_count' => 0];
+    public ?array $fakeStats = null;
+    public ?\Throwable $throwOnGetRunningJobs = null;
+    public ?\Throwable $throwOnGetStats = null;
 
     public function getRunningJobs(?string $serverId = null, bool $showAll = false, ?array $queues = null): array
     {
+        if ($this->throwOnGetRunningJobs) {
+            throw $this->throwOnGetRunningJobs;
+        }
+
         $this->capturedServerId = $serverId;
 
         return $this->fakeResult;
@@ -143,6 +240,10 @@ class SpyRunningJobsManager extends RunningJobsManager
 
     public function getStats(?array $queues = null): array
     {
-        return ['total_running' => 0, 'by_server' => [], 'by_queue' => [], 'by_job_class' => [], 'longest_running' => null, 'warnings' => []];
+        if ($this->throwOnGetStats) {
+            throw $this->throwOnGetStats;
+        }
+
+        return $this->fakeStats ?? ['total_running' => 0, 'by_server' => [], 'by_queue' => [], 'by_job_class' => [], 'longest_running' => null, 'warnings' => []];
     }
 }
