@@ -11,6 +11,7 @@ class ListRunningJobsCommand extends Command
                             {--queue=* : Specific queues to monitor (default: from horizon config)}
                             {--limit=100 : Maximum jobs to display}
                             {--all : Show jobs from all servers}
+                            {--orphaned : Restrict to orphaned jobs (worker process is no longer registered)}
                             {--json : Output as JSON}
                             {--stats : Show statistics instead of job list}';
 
@@ -30,6 +31,7 @@ class ListRunningJobsCommand extends Command
             $limit = min((int) $this->option('limit'), config('horizon-running-jobs.max_jobs', 1000));
             $asJson = $this->option('json');
             $showStats = $this->option('stats');
+            $orphanedOnly = (bool) $this->option('orphaned');
             $isDistributed = $this->manager->isDistributed();
 
             // In non-distributed mode, always show all
@@ -55,7 +57,8 @@ class ListRunningJobsCommand extends Command
             $result = $this->manager->getRunningJobs(
                 $showAll ? null : $serverId,
                 $showAll,
-                $queues
+                $queues,
+                $orphanedOnly
             );
 
             $totalCount = $result['total_count'] ?? count($result['jobs']);
@@ -67,9 +70,11 @@ class ListRunningJobsCommand extends Command
                     'server_id' => $serverId,
                     'distributed' => $isDistributed,
                     'show_all' => $showAll,
+                    'orphaned_only' => $orphanedOnly,
                     'queues' => $queues,
                     'shown_count' => count($displayedJobs),
                     'total_count' => $totalCount,
+                    'orphan_count' => $result['orphan_count'] ?? 0,
                     'truncated' => count($displayedJobs) < $totalCount,
                     'jobs' => $displayedJobs,
                     'warnings' => $result['warnings'],
@@ -107,12 +112,21 @@ class ListRunningJobsCommand extends Command
             // Format for display
             $tableData = array_map(function ($job) {
                 $status = $job['status'] ?? 'running';
+                $orphaned = ($job['is_orphaned'] ?? false) === true;
+
+                $marker = match (true) {
+                    $orphaned && $status === 'zombie' => '⚠ orphan+zombie',
+                    $orphaned => '⚠ orphan',
+                    $status === 'zombie' => '⚠ zombie',
+                    default => 'running',
+                };
+
                 return [
                     'ID' => substr($job['job_id'], 0, 8) . '...',
                     'Job' => $this->truncate($job['job_class'], 35),
                     'Queue' => $job['queue'],
                     'Server' => $this->truncate($job['server'], 20),
-                    'Status' => $status === 'zombie' ? '⚠ zombie' : 'running',
+                    'Status' => $marker,
                     'Started' => date('H:i:s', $job['start_timestamp']),
                     'Duration' => $job['running_for_formatted'],
                     'Attempts' => $job['attempts'],
@@ -159,6 +173,9 @@ class ListRunningJobsCommand extends Command
         $this->newLine();
 
         $this->info("Total Running: {$stats['total_running']}");
+        if (($stats['orphan_count'] ?? 0) > 0) {
+            $this->warn("Orphaned (worker dead): {$stats['orphan_count']}");
+        }
         if (($stats['dropped_count'] ?? 0) > 0) {
             $this->warn("Dropped (malformed): {$stats['dropped_count']}");
         }
@@ -168,6 +185,15 @@ class ListRunningJobsCommand extends Command
             $this->info("By Status:");
             foreach ($stats['by_status'] as $status => $count) {
                 $marker = $status === 'zombie' && $count > 0 ? ' ⚠' : '';
+                $this->line("  • {$status}: {$count}{$marker}");
+            }
+            $this->newLine();
+        }
+
+        if (!empty($stats['by_orphan_status'])) {
+            $this->info("By Orphan Status:");
+            foreach ($stats['by_orphan_status'] as $status => $count) {
+                $marker = $status === 'orphaned' && $count > 0 ? ' ⚠' : '';
                 $this->line("  • {$status}: {$count}{$marker}");
             }
             $this->newLine();

@@ -263,6 +263,44 @@ class RunningJobsManagerTest extends TestCase
         $this->assertSame(2, $result['total_count']);
     }
 
+    public function test_is_job_orphaned_returns_false_for_unknown_server_tag(): void
+    {
+        $this->assertFalse($this->manager()->isJobOrphaned('unknown', []));
+    }
+
+    public function test_is_job_orphaned_returns_false_when_tag_matches_live_supervisor(): void
+    {
+        $live = ['ashiqs-macbook-prolocal-XXX:web-01'];
+
+        $this->assertFalse($this->manager()->isJobOrphaned('web-01', $live));
+    }
+
+    public function test_is_job_orphaned_returns_false_for_exact_supervisor_name_match(): void
+    {
+        $live = ['supervisor-01'];
+
+        $this->assertFalse($this->manager()->isJobOrphaned('supervisor-01', $live));
+    }
+
+    public function test_is_job_orphaned_returns_true_when_tag_not_in_live_list(): void
+    {
+        $live = ['master-A:web-01', 'master-B:web-02'];
+
+        $this->assertTrue($this->manager()->isJobOrphaned('web-03', $live));
+    }
+
+    public function test_is_job_orphaned_returns_true_when_live_list_is_empty(): void
+    {
+        $this->assertTrue($this->manager()->isJobOrphaned('web-01', []));
+    }
+
+    public function test_is_job_orphaned_abstains_when_lookup_unavailable(): void
+    {
+        // null = the live-supervisor lookup couldn't run; treat as unknown,
+        // not orphaned, so we don't false-positive every job.
+        $this->assertFalse($this->manager()->isJobOrphaned('web-01', null));
+    }
+
     public function test_get_default_queues_finds_hostname_keyed_supervisor(): void
     {
         // Regression for the dot-in-hostname config-path bug:

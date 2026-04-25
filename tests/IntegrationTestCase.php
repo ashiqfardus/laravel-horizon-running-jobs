@@ -25,6 +25,13 @@ abstract class IntegrationTestCase extends TestCase
         // Manager + connection wiring use these.
         $app['config']->set('horizon.use', 'default');
         $app['config']->set('horizon-running-jobs.cache.enabled', false);
+
+        // Horizon's service provider isn't booted under TestBench, so the
+        // 'horizon' connection it normally registers doesn't exist. The
+        // SupervisorInspector and the orphan-detection lookup both call
+        // Redis::connection('horizon'), so register a 'horizon' connection
+        // pointed at the same Redis with the same isolation database.
+        $app['config']->set('database.redis.horizon', $app['config']->get('database.redis.default'));
     }
 
     protected function setUp(): void

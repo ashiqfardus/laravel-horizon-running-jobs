@@ -152,6 +152,56 @@ class ListRunningJobsCommandTest extends TestCase
         $this->assertSame(['emails', 'reports'], $spy->capturedQueues);
     }
 
+    public function test_orphan_status_renders_in_human_table(): void
+    {
+        $orphan = $this->job('orphan-1', 'App\\Jobs\\Stuck', 'reports', 'web-01', 'running', 5);
+        $orphan['is_orphaned'] = true;
+
+        $this->bindManager(new SpyManager(jobs: [$orphan]));
+
+        Artisan::call('horizon:running-jobs');
+        $output = Artisan::output();
+
+        $this->assertStringContainsString('⚠ orphan', $output);
+    }
+
+    public function test_orphan_zombie_combo_renders_in_human_table(): void
+    {
+        $job = $this->job('z-orphan', 'App\\Jobs\\Stuck', 'reports', 'web-01', 'zombie', 200);
+        $job['is_orphaned'] = true;
+
+        $this->bindManager(new SpyManager(jobs: [$job]));
+
+        Artisan::call('horizon:running-jobs');
+        $output = Artisan::output();
+
+        $this->assertStringContainsString('⚠ orphan+zombie', $output);
+    }
+
+    public function test_orphaned_flag_passes_through_to_manager(): void
+    {
+        $spy = new SpyManager(jobs: []);
+        $this->bindManager($spy);
+
+        Artisan::call('horizon:running-jobs', ['--orphaned' => true]);
+
+        $this->assertTrue($spy->capturedOrphanedOnly);
+    }
+
+    public function test_json_includes_orphan_count_and_orphaned_only_flag(): void
+    {
+        $orphan = $this->job('o-1', 'App\\Jobs\\X', 'default', 'web-01', 'running', 1);
+        $orphan['is_orphaned'] = true;
+
+        $this->bindManager(new SpyManager(jobs: [$orphan], totalCount: 1));
+
+        Artisan::call('horizon:running-jobs', ['--json' => true, '--orphaned' => true]);
+        $output = Artisan::output();
+
+        $this->assertStringContainsString('"orphaned_only": true', $output);
+        $this->assertStringContainsString('"orphan_count":', $output);
+    }
+
     private function bindManager(SpyManager $manager): void
     {
         $this->app->instance(RunningJobsManager::class, $manager);
@@ -179,6 +229,7 @@ class ListRunningJobsCommandTest extends TestCase
 class SpyManager extends RunningJobsManager
 {
     public ?array $capturedQueues = null;
+    public bool $capturedOrphanedOnly = false;
 
     public function __construct(
         public array $jobs = [],
@@ -195,15 +246,17 @@ class SpyManager extends RunningJobsManager
     public function getServerIdentifier(): string { return 'web-01'; }
     public function getDefaultQueues(): array { return ['default']; }
 
-    public function getRunningJobs(?string $serverId = null, bool $showAll = false, ?array $queues = null): array
+    public function getRunningJobs(?string $serverId = null, bool $showAll = false, ?array $queues = null, bool $orphanedOnly = false): array
     {
         $this->capturedQueues = $queues;
+        $this->capturedOrphanedOnly = $orphanedOnly;
 
         return [
             'jobs' => $this->jobs,
             'warnings' => $this->warnings,
             'total_count' => $this->totalCount ?? count($this->jobs),
             'dropped_count' => 0,
+            'orphan_count' => count(array_filter($this->jobs, fn ($j) => ($j['is_orphaned'] ?? false) === true)),
         ];
     }
 

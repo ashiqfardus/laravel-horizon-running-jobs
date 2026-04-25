@@ -10,6 +10,12 @@ class RunningJobsManager
 {
     protected array $config;
 
+    /** @var array<int, string>|null  memoized within a single fetchRunningJobs call; null after a failed lookup */
+    protected ?array $liveSupervisorNames = null;
+
+    /** Whether we've already attempted the live-supervisor lookup this request */
+    protected bool $liveSupervisorsQueried = false;
+
     public function __construct(array $config)
     {
         $this->config = $config;
@@ -18,15 +24,17 @@ class RunningJobsManager
     /**
      * Get all running jobs.
      *
-     * @param string|null $serverId Filter by server identifier (null = current server)
-     * @param bool $showAll Show jobs from all servers
-     * @param array|null $queues Specific queues to check
+     * @param  string|null  $serverId       Filter by server identifier (null = current server)
+     * @param  bool         $showAll        Show jobs from all servers
+     * @param  array|null   $queues         Specific queues to check
+     * @param  bool         $orphanedOnly   Restrict the response to orphaned jobs (workers that have died)
      * @return array
      */
     public function getRunningJobs(
         ?string $serverId = null,
         bool $showAll = false,
-        ?array $queues = null
+        ?array $queues = null,
+        bool $orphanedOnly = false
     ): array {
         $serverId = $serverId ?? $this->getServerIdentifier();
         $queues = $queues ?? $this->getDefaultQueues();
@@ -38,15 +46,15 @@ class RunningJobsManager
 
         // Use caching if enabled
         if ($this->config['cache']['enabled'] ?? false) {
-            $cacheKey = $this->buildCacheKey($serverId, $showAll, $queues);
+            $cacheKey = $this->buildCacheKey($serverId, $showAll, $queues, $orphanedOnly);
             $ttl = $this->config['cache']['ttl'] ?? 10;
 
-            return Cache::remember($cacheKey, $ttl, function () use ($serverId, $showAll, $queues) {
-                return $this->fetchRunningJobs($serverId, $showAll, $queues);
+            return Cache::remember($cacheKey, $ttl, function () use ($serverId, $showAll, $queues, $orphanedOnly) {
+                return $this->fetchRunningJobs($serverId, $showAll, $queues, $orphanedOnly);
             });
         }
 
-        return $this->fetchRunningJobs($serverId, $showAll, $queues);
+        return $this->fetchRunningJobs($serverId, $showAll, $queues, $orphanedOnly);
     }
 
     /**
@@ -107,8 +115,10 @@ class RunningJobsManager
     /**
      * Fetch running jobs directly from Redis.
      */
-    protected function fetchRunningJobs(string $hostname, bool $showAll, array $queues): array
+    protected function fetchRunningJobs(string $hostname, bool $showAll, array $queues, bool $orphanedOnly = false): array
     {
+        $this->liveSupervisorsQueried = false; // force a fresh read for this request
+        $this->liveSupervisorNames = null;
         $allJobs = [];
         $warnings = [];
         $droppedCount = 0;
@@ -151,8 +161,17 @@ class RunningJobsManager
             $warnings[] = count($zombies) . " zombie job(s) detected (reservation expired but still in queue)";
         }
 
+        $orphans = array_filter($allJobs, fn ($job) => ($job['is_orphaned'] ?? false) === true);
+        if (! empty($orphans)) {
+            $warnings[] = count($orphans) . ' orphan job(s) detected (worker process is no longer registered)';
+        }
+
         if ($droppedCount > 0) {
             $warnings[] = "{$droppedCount} malformed job(s) skipped (see logs)";
+        }
+
+        if ($orphanedOnly) {
+            $allJobs = array_values($orphans);
         }
 
         return [
@@ -160,6 +179,7 @@ class RunningJobsManager
             'warnings' => $warnings,
             'total_count' => $totalReserved,
             'dropped_count' => $droppedCount,
+            'orphan_count' => count($orphans),
         ];
     }
 
@@ -247,6 +267,7 @@ class RunningJobsManager
             'queue' => $queue,
             'server' => $serverTag,
             'status' => $this->resolveJobStatus($reservedScore, $currentTimestamp),
+            'is_orphaned' => $this->isJobOrphaned($serverTag, $this->getLiveSupervisorNames()),
             'start_time' => date('c', $reservationTime),
             'start_timestamp' => $reservationTime,
             'running_for_seconds' => $runningFor,
@@ -402,6 +423,72 @@ class RunningJobsManager
     }
 
     /**
+     * Decide whether a reserved job is orphaned: its tagged supervisor is no
+     * longer registered as alive. Catches the case where a worker dies while
+     * its reservation is still valid (so the zombie heuristic, which only
+     * fires after the reservation expires, would miss it).
+     *
+     * Matching is exact OR suffix on `:<serverTag>` because Horizon stores
+     * supervisor names as `<master>:<configKey>` while the package stores
+     * the configKey alone in the job's tags.
+     *
+     * Pass `null` for liveSupervisorNames when the lookup is unavailable;
+     * we abstain rather than risk false positives.
+     *
+     * @param  array<int, string>|null  $liveSupervisorNames
+     */
+    public function isJobOrphaned(string $serverTag, ?array $liveSupervisorNames): bool
+    {
+        if ($serverTag === 'unknown' || $liveSupervisorNames === null) {
+            return false;
+        }
+
+        foreach ($liveSupervisorNames as $name) {
+            if ($name === $serverTag || str_ends_with($name, ":{$serverTag}")) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Live supervisor names (those whose registration has not yet expired).
+     * Memoized per fetchRunningJobs() call so we don't re-query Redis once
+     * per reserved job.
+     *
+     * Returns null when the underlying Redis call is unavailable (e.g.
+     * Horizon's connection isn't bound) — the caller should treat the orphan
+     * status as "unknown" in that case.
+     *
+     * @return array<int, string>|null
+     */
+    public function getLiveSupervisorNames(): ?array
+    {
+        if ($this->liveSupervisorsQueried) {
+            return $this->liveSupervisorNames;
+        }
+
+        $this->liveSupervisorsQueried = true;
+
+        try {
+            $names = $this->getHorizonRedisConnection()
+                ->zrangebyscore('supervisors', time(), '+inf');
+
+            $this->liveSupervisorNames = is_array($names) ? array_values($names) : [];
+        } catch (\Throwable) {
+            $this->liveSupervisorNames = null;
+        }
+
+        return $this->liveSupervisorNames;
+    }
+
+    protected function getHorizonRedisConnection()
+    {
+        return app('redis')->connection('horizon');
+    }
+
+    /**
      * Get the Redis connection.
      */
     protected function getRedisConnection()
@@ -414,14 +501,15 @@ class RunningJobsManager
      * clearCache() instantly invalidates every previously-cached entry without
      * needing to enumerate keys or rely on cache tags.
      */
-    public function buildCacheKey(string $hostname, bool $showAll, array $queues): string
+    public function buildCacheKey(string $hostname, bool $showAll, array $queues, bool $orphanedOnly = false): string
     {
         $prefix = $this->config['cache']['prefix'] ?? 'horizon_running_jobs';
         $epoch = $this->getCacheEpoch();
         $scope = $showAll ? 'all' : 'local';
         $queueHash = md5(json_encode($queues));
+        $orphan = $orphanedOnly ? ':orphan' : '';
 
-        return "{$prefix}:v{$epoch}:{$hostname}:{$scope}:{$queueHash}";
+        return "{$prefix}:v{$epoch}:{$hostname}:{$scope}:{$queueHash}{$orphan}";
     }
 
     /**
@@ -460,17 +548,20 @@ class RunningJobsManager
         $byQueue = [];
         $byJobClass = [];
         $byStatus = ['running' => 0, 'zombie' => 0];
+        $byOrphanStatus = ['orphaned' => 0, 'healthy' => 0];
 
         foreach ($jobs as $job) {
             $server = $job['server'];
             $queue = $job['queue'];
             $class = $job['job_class'];
             $status = $job['status'] ?? 'running';
+            $isOrphaned = ($job['is_orphaned'] ?? false) === true;
 
             $byServer[$server] = ($byServer[$server] ?? 0) + 1;
             $byQueue[$queue] = ($byQueue[$queue] ?? 0) + 1;
             $byJobClass[$class] = ($byJobClass[$class] ?? 0) + 1;
             $byStatus[$status] = ($byStatus[$status] ?? 0) + 1;
+            $byOrphanStatus[$isOrphaned ? 'orphaned' : 'healthy']++;
         }
 
         return [
@@ -479,7 +570,9 @@ class RunningJobsManager
             'by_queue' => $byQueue,
             'by_job_class' => $byJobClass,
             'by_status' => $byStatus,
+            'by_orphan_status' => $byOrphanStatus,
             'dropped_count' => $result['dropped_count'] ?? 0,
+            'orphan_count' => $result['orphan_count'] ?? 0,
             'longest_running' => $jobs[0] ?? null,
             'warnings' => $result['warnings'],
         ];

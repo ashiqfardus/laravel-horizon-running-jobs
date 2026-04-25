@@ -23,22 +23,25 @@ class RunningJobsController extends Controller
         try {
             $hostname = request()->query('hostname') ?: $this->manager->getServerIdentifier();
             $showAll = filter_var(request()->query('all', false), FILTER_VALIDATE_BOOLEAN);
+            $orphanedOnly = filter_var(request()->query('orphaned', false), FILTER_VALIDATE_BOOLEAN);
 
             $queues = $this->resolveQueues();
             if ($queues instanceof JsonResponse) {
                 return $queues;
             }
 
-            $result = $this->manager->getRunningJobs($hostname, $showAll, $queues);
+            $result = $this->manager->getRunningJobs($hostname, $showAll, $queues, $orphanedOnly);
 
             return response()->json([
                 'success' => true,
                 'hostname' => $hostname,
                 'timestamp' => now()->toIso8601String(),
                 'queues_monitored' => $queues,
+                'orphaned_only' => $orphanedOnly,
                 'running_jobs_count' => count($result['jobs']),
                 'total_count' => $result['total_count'],
                 'dropped_count' => $result['dropped_count'] ?? 0,
+                'orphan_count' => $result['orphan_count'] ?? 0,
                 'jobs' => $result['jobs'],
                 'warnings' => $result['warnings'],
             ]);

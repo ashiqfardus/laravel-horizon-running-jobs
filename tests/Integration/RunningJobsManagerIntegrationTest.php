@@ -100,6 +100,64 @@ class RunningJobsManagerIntegrationTest extends IntegrationTestCase
         $this->assertSame(2, count($all['jobs']));
     }
 
+    public function test_job_marked_orphaned_when_tagged_supervisor_not_in_live_set(): void
+    {
+        // Seed a reserved job tagged with 'web-01' but no supervisor in the
+        // live-supervisors zset → orphaned.
+        $this->seedReservedJob('default', $this->makePayload([
+            'uuid' => 'orphaned-job',
+            'tags' => ['server:web-01'],
+        ]));
+
+        $result = $this->manager()->getRunningJobs(null, true, ['default']);
+
+        $this->assertSame(1, $result['orphan_count']);
+        $this->assertTrue($result['jobs'][0]['is_orphaned']);
+        $this->assertContains(
+            '1 orphan job(s) detected (worker process is no longer registered)',
+            $result['warnings']
+        );
+    }
+
+    public function test_job_not_orphaned_when_tagged_supervisor_is_live(): void
+    {
+        // Register a live supervisor whose name suffix-matches the job's tag.
+        $this->redis()->zadd('supervisors', time() + 90, 'master-1:web-01');
+
+        $this->seedReservedJob('default', $this->makePayload([
+            'uuid' => 'healthy-job',
+            'tags' => ['server:web-01'],
+        ]));
+
+        $result = $this->manager()->getRunningJobs(null, true, ['default']);
+
+        $this->assertSame(0, $result['orphan_count']);
+        $this->assertFalse($result['jobs'][0]['is_orphaned']);
+    }
+
+    public function test_orphaned_only_filter_excludes_healthy_jobs(): void
+    {
+        // One healthy supervisor, one tagged job for it (healthy), one tagged
+        // for a non-existent supervisor (orphaned).
+        $this->redis()->zadd('supervisors', time() + 90, 'master-1:web-01');
+
+        $this->seedReservedJob('default', $this->makePayload([
+            'uuid' => 'healthy',
+            'tags' => ['server:web-01'],
+        ]));
+        $this->seedReservedJob('default', $this->makePayload([
+            'uuid' => 'orphan',
+            'tags' => ['server:web-99'],
+        ]));
+
+        $result = $this->manager()->getRunningJobs(null, true, ['default'], orphanedOnly: true);
+
+        $this->assertCount(1, $result['jobs']);
+        $this->assertSame('orphan', $result['jobs'][0]['job_id']);
+        $this->assertSame(1, $result['orphan_count']);
+        $this->assertSame(2, $result['total_count']); // total still reflects all reserved
+    }
+
     public function test_max_jobs_truncates_results_but_total_count_still_reflects_redis(): void
     {
         for ($i = 1; $i <= 25; $i++) {

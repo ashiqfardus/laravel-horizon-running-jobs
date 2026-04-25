@@ -231,6 +231,38 @@ class RunningJobsControllerTest extends TestCase
 
         $this->getJson('/api/horizon/running-jobs/stats')->assertStatus(403);
     }
+
+    public function test_orphaned_query_param_passes_through_and_surfaces_count(): void
+    {
+        $spy = new SpyRunningJobsManager(['distributed' => true, 'cache' => ['enabled' => false]]);
+        $spy->fakeResult = [
+            'jobs' => [],
+            'warnings' => ['2 orphan job(s) detected (worker process is no longer registered)'],
+            'total_count' => 5,
+            'dropped_count' => 0,
+            'orphan_count' => 2,
+        ];
+        $this->app->instance(RunningJobsManager::class, $spy);
+
+        $this->getJson('/api/horizon/running-jobs?orphaned=true')
+            ->assertOk()
+            ->assertJsonPath('orphaned_only', true)
+            ->assertJsonPath('orphan_count', 2);
+
+        $this->assertTrue($spy->capturedOrphanedOnly);
+    }
+
+    public function test_orphaned_defaults_to_false_when_param_absent(): void
+    {
+        $spy = new SpyRunningJobsManager(['distributed' => true, 'cache' => ['enabled' => false]]);
+        $this->app->instance(RunningJobsManager::class, $spy);
+
+        $this->getJson('/api/horizon/running-jobs')
+            ->assertOk()
+            ->assertJsonPath('orphaned_only', false);
+
+        $this->assertFalse($spy->capturedOrphanedOnly);
+    }
 }
 
 class SpyRunningJobsManager extends RunningJobsManager
@@ -242,14 +274,16 @@ class SpyRunningJobsManager extends RunningJobsManager
     public ?array $fakeStats = null;
     public ?\Throwable $throwOnGetRunningJobs = null;
     public ?\Throwable $throwOnGetStats = null;
+    public bool $capturedOrphanedOnly = false;
 
-    public function getRunningJobs(?string $serverId = null, bool $showAll = false, ?array $queues = null): array
+    public function getRunningJobs(?string $serverId = null, bool $showAll = false, ?array $queues = null, bool $orphanedOnly = false): array
     {
         if ($this->throwOnGetRunningJobs) {
             throw $this->throwOnGetRunningJobs;
         }
 
         $this->capturedServerId = $serverId;
+        $this->capturedOrphanedOnly = $orphanedOnly;
 
         return $this->fakeResult;
     }
