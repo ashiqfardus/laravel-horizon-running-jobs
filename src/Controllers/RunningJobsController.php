@@ -18,7 +18,7 @@ class RunningJobsController extends Controller
     public function index(): JsonResponse
     {
         try {
-            $hostname = request()->query('hostname', gethostname());
+            $hostname = request()->query('hostname') ?: $this->manager->getServerIdentifier();
             $showAll = filter_var(request()->query('all', false), FILTER_VALIDATE_BOOLEAN);
             $queues = $this->getQueues();
 
