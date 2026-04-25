@@ -47,6 +47,7 @@ class HorizonRunningJobsServiceProvider extends ServiceProvider
                 Commands\ListSupervisorsCommand::class,
                 Commands\ListQueueDepthsCommand::class,
                 Commands\DiagnoseCommand::class,
+                Commands\ReleaseCommand::class,
             ]);
         }
 

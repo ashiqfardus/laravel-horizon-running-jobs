@@ -226,6 +226,35 @@ php artisan horizon:running-jobs --watch=5
 ✓ Found 2 running job(s)
 ```
 
+### Releasing reserved jobs back to pending
+
+When a job is stuck in the reserved set (orphaned worker, zombie reservation, malformed entry that won't process), the `horizon:release` command moves it back to the pending list so the next available worker picks it up.
+
+```bash
+# Release a single job by UUID
+php artisan horizon:release abc-123-def-456
+
+# Release every orphaned reservation in any monitored queue
+php artisan horizon:release --orphaned
+
+# Release every zombie (expired-reservation) job in a specific queue
+php artisan horizon:release --zombie --queue=reports
+
+# Preview without modifying Redis
+php artisan horizon:release --orphaned --dry-run
+
+# Skip the confirmation prompt (suitable for cron / scripts)
+php artisan horizon:release --orphaned --force
+```
+
+Behavior:
+
+- Atomic per job: ZREM from `queues:<q>:reserved` and LPUSH to `queues:<q>` happen inside a single Redis transaction, so a partial failure can't lose the job.
+- Released jobs go to the **front** of the pending list (LPUSH) so they're processed promptly.
+- Every release is logged via `Log::info` with `{job_id, queue, reason}` for audit trails.
+- `--orphaned`, `--zombie`, and a positional job ID are mutually exclusive — pick one targeting mode.
+- The interactive confirm shows the full table of jobs that will be released before applying.
+
 ### Diagnosing Horizon health
 
 ```bash
