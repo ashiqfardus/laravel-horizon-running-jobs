@@ -238,6 +238,7 @@ class RunningJobsManagerTest extends TestCase
     public function test_malformed_reserved_jobs_are_logged_and_counted_as_dropped(): void
     {
         $redis = \Mockery::mock();
+        $redis->shouldReceive('zcard')->with('queues:default:reserved')->andReturn(2);
         $redis->shouldReceive('exists')->with('queues:default:reserved')->andReturn(true);
         $redis->shouldReceive('zrange')->andReturn([
             'not-valid-json' => (float) (time() + 90),
@@ -259,6 +260,7 @@ class RunningJobsManagerTest extends TestCase
 
         $this->assertSame(2, $result['dropped_count']);
         $this->assertSame([], $result['jobs']);
+        $this->assertSame(2, $result['total_count']);
     }
 
     public function test_get_default_queues_finds_hostname_keyed_supervisor(): void

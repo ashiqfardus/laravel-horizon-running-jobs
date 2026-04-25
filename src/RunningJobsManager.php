@@ -112,12 +112,19 @@ class RunningJobsManager
         $allJobs = [];
         $warnings = [];
         $droppedCount = 0;
+        $totalReserved = 0;
         $currentTimestamp = time();
         $maxJobs = $this->config['max_jobs'] ?? 1000;
         $longRunningThreshold = $this->config['long_running_threshold'] ?? 300;
 
         foreach ($queues as $queue) {
             try {
+                // ZCARD gives the true reservoir size before max_jobs caps the
+                // ZRANGE. Without this, total_count would only ever report what
+                // we fetched, which would mask the fact that the user is being
+                // truncated.
+                $totalReserved += (int) $this->getRedisConnection()->zcard("queues:{$queue}:reserved");
+
                 $result = $this->getJobsForQueue($queue, $hostname, $showAll, $currentTimestamp, $maxJobs);
                 $allJobs = array_merge($allJobs, $result['jobs']);
                 $droppedCount += $result['dropped'];
@@ -151,7 +158,7 @@ class RunningJobsManager
         return [
             'jobs' => array_slice($allJobs, 0, $maxJobs),
             'warnings' => $warnings,
-            'total_count' => count($allJobs),
+            'total_count' => $totalReserved,
             'dropped_count' => $droppedCount,
         ];
     }
