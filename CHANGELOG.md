@@ -4,66 +4,57 @@ All notable changes to `horizon-running-jobs` will be documented in this file.
 
 ## [Unreleased]
 
-> Phases 1, 2, and 3 will ship together in the next tagged release. This section
-> tracks Phase 1 (critical bug fixes) and Phase 2 (security defaults).
-> Phase 3 (supervisor health inspection) will be appended before tagging.
+### Added
 
-### Added (Phase 2 — security defaults)
+- Laravel 13 support. PHP floor raised to 8.1.
+- `HorizonRunningJobs::auth($callback)` for registering an authorization closure. The callback receives the `Illuminate\Http\Request` and returns a boolean. Smart defaults: `local` and `testing` environments are always allowed; outside those, the callback decides; without a callback the request is denied with a 403 whose body explains how to register one.
+- `Http\Middleware\Authorize` is appended to the API route group's middleware unconditionally so the gate runs even when the user customizes the middleware list.
+- `throttle:60,1` is included in the default route middleware to cap any caller to 60 requests per minute.
+- `?queues=` query-parameter validation. Each name must match `[A-Za-z0-9_:.-]+`, with a maximum of 20 names per request. Invalid input returns 422.
+- `status` field on every job — `running` or `zombie`. A `zombie` is a reserved-set entry whose reservation has already expired (worker died mid-job, or Horizon has not reaped it yet). The warnings list includes a zombie count when any are present.
+- `dropped_count` on responses — number of malformed reserved-set entries that could not be parsed. Each drop is logged via `Log::warning` with the queue name and the underlying error.
+- CLI `Status` column showing per-row `running` / `⚠ zombie`.
+- CLI `--json` output now includes `total_count`, `shown_count`, and a `truncated` boolean so scripts can detect when results were trimmed by `--limit` or `max_jobs`.
+- `--stats` now returns `by_status` and surfaces `dropped_count` alongside the existing breakdowns.
+- `retry_after` config option to override the auto-detected queue `retry_after` window when the heuristic picks the wrong value.
 
-- **`HorizonRunningJobs::auth($callback)`** — register a closure that decides whether a request can view running jobs. Smart defaults: `local`/`testing` env always allowed; outside those, the callback decides; no callback → 403 with a self-documenting message.
-- **`Http\Middleware\Authorize`** is appended to every API route's middleware unconditionally (runs even if the user strips middleware in their config).
-- **Default `throttle:60,1`** in `routes.middleware` config — caps callers to 60 requests/minute.
-- **Query-parameter validation** on `?queues=`. Each name must match `[A-Za-z0-9_:.-]+`, max 20 names per request. Invalid input returns 422.
+### Changed
 
-### Added (Phase 1)
-
-- **Laravel 13 support.** PHP floor raised to 8.1 (Laravel 13 itself requires PHP 8.3+ — Composer will resolve the right framework version for your PHP).
-- **`status` field on every job** — `"running"` or `"zombie"`. A `zombie` job is one whose reservation has expired but still sits in the reserved set (worker died mid-job or Horizon hasn't reaped it). Warnings summary includes a zombie count.
-- **`dropped_count` on responses** — number of malformed reserved-set entries skipped. Each drop is logged via `Log::warning` with the queue name and error.
-- **`total_count`, `shown_count`, `truncated` in CLI `--json`** — lets scripts detect when `--limit`/`max_jobs` truncated the result.
-- **CLI Status column** — table now shows per-row `running` / `⚠ zombie`.
-- **Stats endpoint expanded** — now returns `by_status` and `dropped_count`.
-- **`retry_after` config option** — override the auto-detected queue retry_after when the heuristic picks the wrong value.
-- **Widget / Vue assets** remain publishable via `--tag=horizon-running-jobs-assets` (documented).
+- Running-duration math now accounts for the queue `retry_after` window. Redis stores reserved-set scores as `reservation_time + retry_after` (the expiry), not the reservation time itself. The manager now subtracts `retry_after` (auto-detected from `config('queue.connections.<horizon.use>.retry_after')`, default 90) to recover the true reservation time. Previous versions returned negative durations.
+- `clearCache()` rewritten using epoch versioning. `Cache::forget($prefix . ':*')` did not support wildcards and silently did nothing; cache keys now embed an epoch counter that `clearCache()` increments, invalidating every previously cached entry.
+- HTTP controller now defaults the hostname to `RunningJobsManager::getServerIdentifier()` instead of `gethostname()`. The previous default returned the web tier's hostname, which usually does not match a Horizon worker in distributed deployments.
+- The `supervisor_id` fallback now scans the serialized payload with a regex instead of `unserialize()`. No class instantiation, no gadget-chain exposure, and it works when the originating job class is not autoloadable in the reading process.
+- Redis connection resolution falls back through `redis_connection` config → `config('horizon.use')` → Laravel default.
+- `RunningJobsManager::parseJobData()` is now `public` and throws `RuntimeException` on malformed payloads instead of returning `null`.
+- `RunningJobsManager::getJobsForQueue()` return shape is now `['jobs' => array, 'dropped' => int]`.
+- `RunningJobsManager::getDefaultQueues()` is now `public`. The HTTP controller delegates to it instead of duplicating queue-detection logic.
+- `response().jobs[*].start_time` / `start_timestamp` reflect the actual reservation time rather than the Redis expiry score.
 
 ### Fixed
-- **Running-duration math (#8).** Redis stores reserved-set scores as `reservation_time + retry_after` (expiry), not reservation time. Previous versions showed negative durations. Manager now subtracts `retry_after` to recover the true reservation time. Package auto-detects `retry_after` from `config('queue.connections.<horizon.use>.retry_after')` (default 90).
-- **`clearCache()` was a no-op (#1).** `Cache::forget($prefix . ':*')` does not support wildcards. Rewritten using epoch versioning: the cache key includes a version number, and `clearCache()` increments that version so all previously cached entries become unreachable instantly.
-- **HTTP controller defaulted to web-tier hostname (#2).** `gethostname()` returns the web server's name, which rarely matches a Horizon worker. Controller now uses `$manager->getServerIdentifier()` to stay consistent with the CLI.
-- **Zombies were silently dropped (#3).** Jobs past their reservation expiry were filtered out; they are now surfaced with `status: "zombie"`.
-- **Malformed jobs silently skipped (#5).** Now logged and counted.
-- **`unserialize` of untrusted Redis payload (#4).** Replaced with a regex scan of the serialized string — no class instantiation, no gadget-chain risk, and works even when the originating job class isn't autoloadable.
-- **Redis connection did not fall back to Horizon's config (#6).** Now resolves `redis_connection` → `config('horizon.use')` → Laravel default.
-- **Queue auto-detection broke on hostnames containing dots.** `config('horizon.defaults.' . gethostname())` treats dots as path separators, so hostnames like `server.local` returned nothing. Manager now reads the defaults array and indexes by hostname directly.
-- **Controller and CLI duplicated queue-detection logic.** Controller now delegates to `RunningJobsManager::getDefaultQueues()` (which is now public).
 
-### Changed (potentially breaking)
-- `RunningJobsManager::parseJobData()` is now **`public`** and **throws `RuntimeException`** on malformed payloads (previously returned `null`). Callers extending the manager should re-read the signature.
-- `RunningJobsManager::getJobsForQueue()` return shape changed from `array<int, array>` to `['jobs' => array, 'dropped' => int]`. Only relevant to subclasses.
-- `RunningJobsManager::getDefaultQueues()` elevated from `protected` to `public`.
-- Removed the old `if ($currentTimestamp > $timestamp + $timeout) return null` filter — jobs that look like zombies now surface with `status: "zombie"` rather than being hidden.
-- `response().jobs[*].start_time` / `start_timestamp` now reflect the *actual reservation time*, not the expiry score.
+- Queue auto-detection no longer breaks on hostnames containing dots. The previous code used `config('horizon.defaults.' . gethostname())`, which interprets dots as a path separator and returned nothing for hostnames like `app-server.local`.
+- Jobs whose reservation has expired are no longer silently filtered out of the response.
+- Malformed reserved-set entries are no longer skipped silently. They are now caught, logged, and counted.
 
 ### Removed
-- PHP 8.0 dropped from the support matrix (Laravel 10+ requires 8.1+).
+
+- PHP 8.0 from the support matrix. Laravel 10+ requires 8.1+.
 
 ## [1.0.0] - 2026-01-07
 
 ### Added
-- Initial release
-- `horizon:running-jobs` Artisan command
-- HTTP API endpoints for running jobs and statistics
-- `TracksServer` trait for easy job integration
-- Hybrid server identification (tags + supervisor_id fallback)
-- Response caching for high-traffic APIs
-- Statistics aggregation by server, queue, and job class
-- Long-running job warnings
-- JSON output mode for CLI
-- Multi-queue support
-- Configurable route middleware
-- Standalone JavaScript widget for dashboard integration
-- Vue.js component for modern frontends
-- Support for Laravel 9.x, 10.x, 11.x, and 12.x
-- Support for PHP 8.0, 8.1, 8.2, 8.3, and 8.4
-- Support for Horizon 5.x and 6.x
 
+- Initial release.
+- `horizon:running-jobs` Artisan command.
+- HTTP API endpoints for running jobs and statistics.
+- `TracksServer` trait for job integration.
+- Hybrid server identification (tags + `supervisor_id` fallback).
+- Response caching for high-traffic APIs.
+- Statistics aggregation by server, queue, and job class.
+- Long-running job warnings.
+- JSON output mode for the CLI.
+- Multi-queue support.
+- Configurable route middleware.
+- Standalone JavaScript widget for dashboard integration.
+- Vue.js component for modern frontends.
+- Support for Laravel 9.x – 12.x, PHP 8.0 – 8.4, Horizon 5.x – 6.x.

@@ -6,7 +6,7 @@
 
 **Monitor currently running jobs in Laravel Horizon.**
 
-Laravel Horizon shows pending, completed, and failed jobs—but not what's **currently running**. This package fills that gap for both single-server and distributed multi-server setups.
+Laravel Horizon shows pending, completed, and failed jobs—but not what's **currently running**. This package fills that gap for single-instance setups and distributed deployments where multiple Laravel applications share a single Redis.
 
 ---
 
@@ -15,7 +15,7 @@ Laravel Horizon shows pending, completed, and failed jobs—but not what's **cur
 - 🔍 **Real-time Monitoring** - See jobs as they execute
 - 🖥️ **CLI Command** - `php artisan horizon:running-jobs`
 - 🌐 **HTTP API** - JSON endpoint for dashboards
-- 🏢 **Multi-Server Support** - Filter by specific server or view all (distributed mode)
+- 🏢 **Distributed-Aware** - Filter by the current instance or view all jobs across instances sharing the same Redis
 - ⏱️ **Duration Tracking** - See how long each job has been running
 - 📊 **Statistics** - Aggregate stats by server, queue, and job class
 - 💾 **Response Caching** - Configurable caching for high-traffic APIs
@@ -65,70 +65,69 @@ If you have **one application server** with Redis on the same or separate machin
 php artisan horizon:running-jobs
 ```
 
-#### 🌐 Distributed Setup (Multiple Servers)
+#### 🌐 Distributed Setup (Shared Redis)
 
-If you have **multiple application servers** sharing a Redis instance, enable distributed mode:
+Enable distributed mode whenever **more than one Laravel application instance shares a single Redis**. That covers any of:
+
+- Several apps on the same machine
+- Apps spread across multiple hosts
+- Containers / pods pointing at the same Redis service
 
 ```php
 // config/horizon-running-jobs.php
 'distributed' => true,
 ```
 
+With this enabled, each instance only sees jobs reserved by its own Horizon supervisor. Use `--all` (CLI) or `?all=true` (HTTP) to view everything across the cluster.
+
 **Server identification depends on your `horizon.php` setup:**
 
 ##### Option A: Using `gethostname()` (Auto-detected ✅)
 
-If your `horizon.php` uses `gethostname()` as the supervisor key:
+If your `horizon.php` keys supervisors by `gethostname()`:
 
 ```php
 // config/horizon.php
 'defaults' => [
-    gethostname() => [  // Each server has unique hostname
+    gethostname() => [
         'connection' => 'redis',
         'queue' => ['default'],
     ],
 ],
 ```
 
-**No additional configuration needed** — each server automatically identifies itself by its hostname.
+No additional configuration needed — each instance automatically identifies itself by its hostname. Works for separate hosts; for multiple instances on one machine, see Option B.
 
 ##### Option B: Using Static Names (Manual config required)
 
-If your `horizon.php` uses static supervisor names:
+When each instance uses a fixed supervisor name (typical for containers, multi-tenant single-host deployments, or any setup where `gethostname()` doesn't uniquely identify the instance):
 
 ```php
 // config/horizon.php
 'defaults' => [
-    'supervisor-01' => [...],  // For Server 1
-    'supervisor-02' => [...],  // For Server 2
+    'supervisor-01' => [...],
+    'supervisor-02' => [...],
 ],
 ```
 
-You **must** tell each server which supervisor it is:
-
-```php
-// On Server 1: config/horizon-running-jobs.php
-'server_identifier' => 'supervisor-01',
-
-// On Server 2: config/horizon-running-jobs.php  
-'server_identifier' => 'supervisor-02',
-```
-
-**Or use an environment variable** (recommended for deployment):
+Tell each instance which supervisor it is — usually from an env var so the same image can be deployed to multiple targets:
 
 ```php
 // config/horizon-running-jobs.php
 'server_identifier' => env('HORIZON_SUPERVISOR_NAME'),
 ```
 
-Then set in `.env` on each server:
+Then set the env var per instance:
+
 ```bash
-# Server 1
+# Instance 1
 HORIZON_SUPERVISOR_NAME=supervisor-01
 
-# Server 2
+# Instance 2
 HORIZON_SUPERVISOR_NAME=supervisor-02
 ```
+
+For containers / pods, set the env var via your orchestrator (Kubernetes downward API, Docker Compose service name, etc.).
 
 ---
 

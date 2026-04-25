@@ -6,12 +6,20 @@ return [
     | Distributed Mode
     |--------------------------------------------------------------------------
     |
-    | Set to true if you have multiple application servers connected to a
-    | shared Redis instance. When false, server filtering is disabled and
-    | all running jobs are shown regardless of which server processes them.
+    | Enable when more than one Laravel application instance shares a single
+    | Redis. The discriminator is "shared Redis," not "multiple servers" —
+    | this includes any of:
     |
-    | - true: Filter jobs by server identifier (distributed setup)
-    | - false: Show all jobs without server filtering (single server setup)
+    |   - several apps on the same machine,
+    |   - apps spread across multiple hosts,
+    |   - containers / pods pointing at the same Redis service.
+    |
+    | When enabled, the package filters reserved jobs by their originating
+    | supervisor identifier so each instance sees only its own work, with an
+    | --all flag (CLI) and ?all=true query param (HTTP) to view everything.
+    |
+    | When disabled, no filtering is applied and the full reserved set is
+    | returned. Use this for a single Laravel instance with a private Redis.
     |
     */
     'distributed' => false,
@@ -21,25 +29,27 @@ return [
     | Server Identifier
     |--------------------------------------------------------------------------
     |
-    | The identifier for this server in distributed mode.
+    | How this Laravel instance identifies itself when distributed mode is on.
+    | Whatever value resolves here must match the supervisor key Horizon
+    | uses for this instance in horizon.php.
     |
-    | Auto-detection (null): Works when your horizon.php uses gethostname():
-    |   'defaults' => [
-    |       gethostname() => [...],  // Each server has unique hostname
-    |   ]
+    | Auto-detect (null) — works out of the box when horizon.php keys its
+    | supervisors by gethostname():
     |
-    | Manual configuration: Required when using static supervisor names:
-    |   'defaults' => [
-    |       'supervisor-01' => [...],  // Server 1
-    |       'supervisor-02' => [...],  // Server 2
-    |   ]
+    |     // config/horizon.php
+    |     'defaults' => [
+    |         gethostname() => [...],
+    |     ]
     |
-    |   In this case, set on each server:
-    |   - Server 1: 'server_identifier' => 'supervisor-01'
-    |   - Server 2: 'server_identifier' => 'supervisor-02'
+    | Static names — when each instance uses a fixed supervisor name, set
+    | 'server_identifier' explicitly on each instance, typically from an env
+    | var so the same image can be deployed to multiple targets:
     |
-    |   Or use environment variable:
-    |   'server_identifier' => env('HORIZON_SUPERVISOR_NAME')
+    |     'server_identifier' => env('HORIZON_SUPERVISOR_NAME'),
+    |
+    | Containers / pods — set the env var via your orchestrator (Kubernetes
+    | downward API, Docker Compose service name, etc.). The value must match
+    | whatever your horizon.php expects for that instance.
     |
     */
     'server_identifier' => null,
