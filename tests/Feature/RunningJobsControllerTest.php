@@ -101,6 +101,25 @@ class RunningJobsControllerTest extends TestCase
 
         $this->assertContains('throttle:60,1', $defaults['routes']['middleware']);
     }
+
+    public function test_dropped_count_and_warnings_pass_through_from_manager(): void
+    {
+        $spy = new SpyRunningJobsManager(['distributed' => true, 'cache' => ['enabled' => false]]);
+        $spy->fakeResult = [
+            'jobs' => [],
+            'warnings' => ['7 malformed job(s) skipped (see logs)'],
+            'total_count' => 0,
+            'dropped_count' => 7,
+        ];
+
+        $this->app->instance(RunningJobsManager::class, $spy);
+
+        $this->getJson('/api/horizon/running-jobs')
+            ->assertOk()
+            ->assertJsonPath('dropped_count', 7)
+            ->assertJsonPath('warnings.0', '7 malformed job(s) skipped (see logs)')
+            ->assertJsonPath('total_count', 0);
+    }
 }
 
 class SpyRunningJobsManager extends RunningJobsManager
@@ -108,11 +127,13 @@ class SpyRunningJobsManager extends RunningJobsManager
     public ?string $capturedServerId = null;
     public string $fakeServerId = 'fake';
 
+    public array $fakeResult = ['jobs' => [], 'warnings' => [], 'total_count' => 0];
+
     public function getRunningJobs(?string $serverId = null, bool $showAll = false, ?array $queues = null): array
     {
         $this->capturedServerId = $serverId;
 
-        return ['jobs' => [], 'warnings' => [], 'total_count' => 0];
+        return $this->fakeResult;
     }
 
     public function getServerIdentifier(): string

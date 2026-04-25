@@ -2,12 +2,15 @@
 
 namespace Ashiqfardus\HorizonRunningJobs\Controllers;
 
+use Ashiqfardus\HorizonRunningJobs\Concerns\HandlesJsonErrors;
+use Ashiqfardus\HorizonRunningJobs\RunningJobsManager;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Routing\Controller;
-use Ashiqfardus\HorizonRunningJobs\RunningJobsManager;
 
 class RunningJobsController extends Controller
 {
+    use HandlesJsonErrors;
+
     public function __construct(
         protected RunningJobsManager $manager
     ) {}
@@ -40,12 +43,8 @@ class RunningJobsController extends Controller
                 'warnings' => $result['warnings'],
             ]);
 
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Failed to fetch running jobs',
-                'message' => app()->environment('local') ? $e->getMessage() : 'Internal server error',
-            ], 500);
+        } catch (\Throwable $e) {
+            return $this->jsonError($e, 'Failed to fetch running jobs');
         }
     }
 
@@ -67,13 +66,8 @@ class RunningJobsController extends Controller
                 'timestamp' => now()->toIso8601String(),
                 'stats' => $stats,
             ]);
-
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Failed to fetch statistics',
-                'message' => app()->environment('local') ? $e->getMessage() : 'Internal server error',
-            ], 500);
+        } catch (\Throwable $e) {
+            return $this->jsonError($e, 'Failed to fetch statistics');
         }
     }
 

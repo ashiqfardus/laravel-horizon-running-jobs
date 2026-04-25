@@ -2,12 +2,15 @@
 
 namespace Ashiqfardus\HorizonRunningJobs\Controllers;
 
+use Ashiqfardus\HorizonRunningJobs\Concerns\HandlesJsonErrors;
 use Ashiqfardus\HorizonRunningJobs\SupervisorInspector;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Routing\Controller;
 
 class SupervisorsController extends Controller
 {
+    use HandlesJsonErrors;
+
     public function __construct(
         protected SupervisorInspector $inspector
     ) {
@@ -30,12 +33,8 @@ class SupervisorsController extends Controller
                 'supervisors' => $result['supervisors'],
                 'masters' => $result['masters'],
             ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'error' => 'Failed to inspect supervisors',
-                'message' => app()->environment('local') ? $e->getMessage() : 'Internal server error',
-            ], 500);
+        } catch (\Throwable $e) {
+            return $this->jsonError($e, 'Failed to inspect supervisors');
         }
     }
 }
