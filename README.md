@@ -607,25 +607,63 @@ class YourJob implements ShouldQueue
 
 ---
 
-## Protecting the API
+## Securing the API
 
-For production, add authentication middleware:
+The API is **safe by default**:
+
+- In `local` and `testing` environments — open. Zero-friction development.
+- Anywhere else — denied with a 403 unless you register an auth callback.
+- Throttled to 60 requests/minute per caller out of the box.
+
+### Production: register an auth callback
+
+In your `AppServiceProvider::boot()` (or any service provider):
+
+```php
+use Ashiqfardus\HorizonRunningJobs\HorizonRunningJobs;
+
+public function boot(): void
+{
+    HorizonRunningJobs::auth(function ($request) {
+        return $request->user()?->is_admin === true;
+    });
+}
+```
+
+The closure receives the incoming `Illuminate\Http\Request`. Return `true` to allow, `false` to deny. Works with whatever auth scheme you already have — Sanctum, Passport, sessions, custom.
+
+If you forget to register the callback in production, the 403 response includes a copy-paste example showing exactly how to fix it.
+
+### Layering with auth middleware (optional)
+
+If you'd rather use a middleware-driven flow alongside the callback, just add it to the route config:
 
 ```php
 // config/horizon-running-jobs.php
-
 'routes' => [
-    'middleware' => ['api', 'auth:sanctum'],
+    'middleware' => ['api', 'throttle:60,1', 'auth:sanctum'],
 ],
 ```
 
-Or disable routes entirely and create your own:
+The bundled `Authorize` middleware runs *after* whatever you configure here, so you get defense-in-depth — middleware AND callback must both pass.
+
+### Disable the routes entirely
+
+If you'd rather wire your own controllers / Gate-based authorization:
 
 ```php
 'routes' => [
     'enabled' => false,
 ],
 ```
+
+### Query parameter validation
+
+The `?queues=` parameter is validated:
+
+- Names must match `[A-Za-z0-9_:.-]+`
+- Maximum 20 names per request
+- Invalid input → `422 Unprocessable Entity` with a clear `Invalid queue parameter` error
 
 ---
 

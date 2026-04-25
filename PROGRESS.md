@@ -16,8 +16,8 @@ Durable state for multi-session work. Read this + `CHANGELOG.md` to resume.
 |---|---|---|
 | Phase 0 — Foundation | ✅ Complete | Laravel 13 + PHP 8.1 floor, sibling demo app, Testbench scaffold |
 | Phase 1 — Critical bug fixes | ✅ Complete + QA close-out | 29 tests green, 8 fixes + side fixes |
-| Phase 2 — Security & hygiene | ⏭️ Next | Not started |
-| Phase 3 — Supervisor health inspection | 🔜 After Phase 2 | Not started |
+| Phase 2 — Security & hygiene | ✅ Complete | 41 tests green; auth gate + throttle + query validation |
+| Phase 3 — Supervisor health inspection | ⏭️ Next | Not started |
 | Phase 4 — Orphaned reserved jobs | ⏳ Later | |
 | Phase 5 — Queue depth view | ⏳ Later | |
 | Phase 6 — Operational tools | ⏳ Later | |
@@ -85,28 +85,29 @@ Durable state for multi-session work. Read this + `CHANGELOG.md` to resume.
 
 ---
 
-## Phase 2 — Security & Hygiene (next, not started)
+## Phase 2 — Security & Hygiene (done)
 
-### Scope
+### What shipped
 
-| Item | Rationale |
-|---|---|
-| Default middleware → `['api', 'auth']` (with opt-out) | Current default is `['api']`, fully open. Security-by-default. |
-| Default `throttle:60,1` on routes | Prevents Redis thundering herd from polling dashboards. |
-| Validate `?queues=` param (regex, max count, non-empty) | Controller accepts arbitrary strings including empty queue names → Redis calls for `queues::reserved`. |
-| Feature test for controller `dropped_count` passthrough | Close the amber from Phase 1 close-out. |
-| Document middleware opt-out in README + CHANGELOG | Security-breaking defaults need migration notes. |
+- **`HorizonRunningJobs::auth($callback)`** — closure-based authorization. Smart defaults (`local`/`testing` allowed; production denies unless callback registered). Mirrors Horizon's pattern but applied to HTTP-level access without forcing a specific auth stack.
+- **`Http\Middleware\Authorize`** — appended to every route's middleware unconditionally. Returns a self-documenting 403 when denied (the message includes a copy-paste callback example).
+- **Default `throttle:60,1`** on the route group middleware.
+- **Query-parameter validation** on `?queues=`: regex allowlist (`[A-Za-z0-9_:.-]+`), max 20 names, 422 on invalid input.
 
-### Things already done from Phase 2 during Phase 1
+### Tests (12 added → 41 total)
 
-- Controller–manager queue dedup ✓
-- `getDefaultQueues` made public ✓
+- 5 unit tests for `HorizonRunningJobs::auth`/`check`/`hasAuthCallback` covering env defaults, callback override, callback clear.
+- 2 feature tests for HTTP 403 with helpful body + 200 with callback returning true.
+- 5 feature tests for `?queues=` validation and throttle config presence.
 
-### Estimated effort: ~1 day
+### Carry-overs (not blockers, deferred to later phases)
+
+- No `Authorize` middleware unit test asserting the 403 body shape directly — covered indirectly via the HTTP feature test.
+- Query validation regex is conservative; if real users hit names with special chars not in the allowlist, expand here.
 
 ---
 
-## Phase 3 — Supervisor health inspection (after Phase 2, not started)
+## Phase 3 — Supervisor health inspection (next, not started)
 
 ### Scope
 

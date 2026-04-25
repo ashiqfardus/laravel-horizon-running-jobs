@@ -5,11 +5,18 @@ All notable changes to `horizon-running-jobs` will be documented in this file.
 ## [Unreleased]
 
 > Phases 1, 2, and 3 will ship together in the next tagged release. This section
-> currently tracks Phase 1 (critical bug fixes + Laravel 13 support + demo app).
-> Phase 2 (security defaults + dedup) and Phase 3 (supervisor health inspection)
-> will be appended here before the version is tagged.
+> tracks Phase 1 (critical bug fixes) and Phase 2 (security defaults).
+> Phase 3 (supervisor health inspection) will be appended before tagging.
 
-### Added
+### Added (Phase 2 — security defaults)
+
+- **`HorizonRunningJobs::auth($callback)`** — register a closure that decides whether a request can view running jobs. Smart defaults: `local`/`testing` env always allowed; outside those, the callback decides; no callback → 403 with a self-documenting message.
+- **`Http\Middleware\Authorize`** is appended to every API route's middleware unconditionally (runs even if the user strips middleware in their config).
+- **Default `throttle:60,1`** in `routes.middleware` config — caps callers to 60 requests/minute.
+- **Query-parameter validation** on `?queues=`. Each name must match `[A-Za-z0-9_:.-]+`, max 20 names per request. Invalid input returns 422.
+
+### Added (Phase 1)
+
 - **Laravel 13 support.** PHP floor raised to 8.1 (Laravel 13 itself requires PHP 8.3+ — Composer will resolve the right framework version for your PHP).
 - **`status` field on every job** — `"running"` or `"zombie"`. A `zombie` job is one whose reservation has expired but still sits in the reserved set (worker died mid-job or Horizon hasn't reaped it). Warnings summary includes a zombie count.
 - **`dropped_count` on responses** — number of malformed reserved-set entries skipped. Each drop is logged via `Log::warning` with the queue name and error.
