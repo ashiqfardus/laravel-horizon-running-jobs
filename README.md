@@ -581,7 +581,78 @@ The two states can combine — a job can be both a zombie (expired reservation) 
 
 ## Dashboard Integration
 
-This package provides multiple ways to display running jobs in a web interface.
+The package ships a Blade-based dashboard with composable panels and an optional standalone page. No build step. No JS framework imposed on your app. Drops into vanilla Laravel, Livewire, Inertia, or anywhere Blade renders.
+
+### Quick start: the standalone dashboard
+
+By default, visiting `/horizon/queue-monitor` in your app shows the full dashboard:
+
+- Health banner across the top (PASS / WARN / FAIL with the reason)
+- Supervisors table — names, status, expiry, stale flag
+- Queue depths — pending / reserved / delayed per queue + totals
+- Running jobs table — orphan and zombie badges, inline release button on rows that need attention
+
+The route is registered automatically. Auth is gated by the same `Authorize` middleware as the JSON API — by default open in `local`/`testing`, denied in `production` until you register an auth callback (see [Securing the API](#securing-the-api)).
+
+To disable the route entirely:
+
+```php
+// config/horizon-running-jobs.php
+'ui' => [
+    'enabled' => false,
+],
+```
+
+### Embedding individual panels in your own dashboard
+
+Each panel is a composable Blade component. Drop them into your existing admin pages:
+
+```blade
+{{-- Full dashboard, all panels --}}
+<x-horizon-running-jobs::dashboard />
+
+{{-- Or pick the ones you want --}}
+<x-horizon-running-jobs::diagnose-banner />
+<x-horizon-running-jobs::supervisors-panel />
+<x-horizon-running-jobs::queues-panel />
+<x-horizon-running-jobs::running-jobs-table :poll="3000" :allow-release="true" />
+<x-horizon-running-jobs::running-jobs-table :orphaned-only="true" />
+```
+
+Each component accepts a `:poll` prop (refresh interval in milliseconds; pass `0` to disable). The `running-jobs-table` additionally accepts `:allow-release` (show inline release buttons) and `:orphaned-only` (filter to orphan rows).
+
+For panels to auto-refresh in a host page, the page needs:
+
+- The package CSS (served by the package, or copy via `vendor:publish --tag=horizon-running-jobs-css`)
+- Alpine.js (the Laravel default for sprinkles of interactivity)
+- A CSRF meta tag (`<meta name="csrf-token" content="...">`) if the release button is enabled
+
+### Theming
+
+The dashboard ships with a small scoped stylesheet. All colors are CSS variables — override any of them in your own stylesheet to retheme:
+
+```css
+.hrj {
+    --hrj-color-pass: #00b8a9;
+    --hrj-color-warn: #ffae00;
+    --hrj-color-fail: #ff5b5b;
+    --hrj-bg: #fafafa;
+    --hrj-border: #e0e0e0;
+    /* ... */
+}
+```
+
+Dark mode is auto-detected via `prefers-color-scheme`. Force light mode by adding `class="hrj hrj--light"` to the wrapper.
+
+To fork the views entirely:
+
+```bash
+php artisan vendor:publish --tag=horizon-running-jobs-views
+```
+
+Now `resources/views/vendor/horizon-running-jobs/` is yours.
+
+### Legacy v1 widget (deprecated)
 
 ### Option 1: Standalone JavaScript Widget
 

@@ -35,10 +35,23 @@ class HorizonRunningJobsServiceProvider extends ServiceProvider
             __DIR__ . '/../config/horizon-running-jobs.php' => config_path('horizon-running-jobs.php'),
         ], 'horizon-running-jobs-config');
 
-        // Publish assets (Vue component and widget)
+        // Publish assets (Vue component and widget) — DEPRECATED, kept for v1 users.
         $this->publishes([
             __DIR__ . '/../resources/js' => public_path('vendor/horizon-running-jobs'),
         ], 'horizon-running-jobs-assets');
+
+        // Load + publish Blade views (the new UI). Anonymous Blade components
+        // in resources/views/components/ become <x-horizon-running-jobs::...>.
+        $this->loadViewsFrom(__DIR__ . '/../resources/views', 'horizon-running-jobs');
+
+        $this->publishes([
+            __DIR__ . '/../resources/views' => resource_path('views/vendor/horizon-running-jobs'),
+        ], 'horizon-running-jobs-views');
+
+        // Publish the scoped CSS so users can serve it from their public dir.
+        $this->publishes([
+            __DIR__ . '/../resources/css' => public_path('vendor/horizon-running-jobs'),
+        ], 'horizon-running-jobs-css');
 
         // Register commands
         if ($this->app->runningInConsole()) {

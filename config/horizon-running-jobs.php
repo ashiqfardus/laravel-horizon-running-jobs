@@ -122,6 +122,25 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | UI Dashboard
+    |--------------------------------------------------------------------------
+    |
+    | The Blade dashboard at /horizon/queue-monitor (and the related panel-
+    | refresh + release endpoints + asset serving). Disable here to ship the
+    | API/CLI features without the browser dashboard.
+    |
+    | The dashboard uses `web` middleware (sessions + CSRF) rather than `api`
+    | so the inline Release button can submit a CSRF-protected POST.
+    |
+    */
+    'ui' => [
+        'enabled' => true,
+        'prefix' => 'horizon/queue-monitor',
+        'middleware' => ['web'],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Redis Connection
     |--------------------------------------------------------------------------
     |

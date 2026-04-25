@@ -1,0 +1,266 @@
+/*
+ * Horizon Running Jobs UI — scoped styles.
+ *
+ * All rules are namespaced under .hrj so they cannot bleed into the host
+ * application's styles. Override any of the CSS variables below in your
+ * own stylesheet to retheme.
+ */
+
+.hrj {
+    --hrj-bg: #ffffff;
+    --hrj-bg-elev: #f9fafb;
+    --hrj-bg-row-stripe: #f3f4f6;
+    --hrj-border: #e5e7eb;
+    --hrj-text: #111827;
+    --hrj-text-muted: #6b7280;
+    --hrj-text-subtle: #9ca3af;
+
+    --hrj-color-pass: #10b981;
+    --hrj-color-warn: #f59e0b;
+    --hrj-color-fail: #ef4444;
+    --hrj-color-info: #3b82f6;
+    --hrj-color-orphan: #f97316;
+    --hrj-color-zombie: #a855f7;
+
+    --hrj-radius: 8px;
+    --hrj-radius-sm: 4px;
+    --hrj-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --hrj-spacing: 1rem;
+    --hrj-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --hrj-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+    color: var(--hrj-text);
+    font-family: var(--hrj-font);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+@media (prefers-color-scheme: dark) {
+    .hrj:not(.hrj--light) {
+        --hrj-bg: #1f2937;
+        --hrj-bg-elev: #111827;
+        --hrj-bg-row-stripe: #283344;
+        --hrj-border: #374151;
+        --hrj-text: #f3f4f6;
+        --hrj-text-muted: #9ca3af;
+        --hrj-text-subtle: #6b7280;
+    }
+}
+
+.hrj * {
+    box-sizing: border-box;
+}
+
+.hrj-panel {
+    background: var(--hrj-bg);
+    border: 1px solid var(--hrj-border);
+    border-radius: var(--hrj-radius);
+    box-shadow: var(--hrj-shadow);
+    margin-bottom: var(--hrj-spacing);
+    overflow: hidden;
+}
+
+.hrj-panel__header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--hrj-border);
+    background: var(--hrj-bg-elev);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.hrj-panel__title {
+    font-weight: 600;
+    margin: 0;
+    font-size: 15px;
+}
+
+.hrj-panel__meta {
+    color: var(--hrj-text-muted);
+    font-size: 12px;
+    font-family: var(--hrj-font-mono);
+}
+
+.hrj-panel__body {
+    padding: 0;
+    overflow-x: auto;
+}
+
+.hrj-panel__empty {
+    padding: 32px 16px;
+    text-align: center;
+    color: var(--hrj-text-muted);
+}
+
+.hrj-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.hrj-table th {
+    text-align: left;
+    padding: 10px 12px;
+    font-weight: 600;
+    color: var(--hrj-text-muted);
+    background: var(--hrj-bg-elev);
+    border-bottom: 1px solid var(--hrj-border);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 11px;
+}
+
+.hrj-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--hrj-border);
+    vertical-align: middle;
+}
+
+.hrj-table tr:last-child td {
+    border-bottom: none;
+}
+
+.hrj-table tr:nth-child(even) td {
+    background: var(--hrj-bg-row-stripe);
+}
+
+.hrj-mono {
+    font-family: var(--hrj-font-mono);
+    font-size: 12px;
+}
+
+.hrj-muted {
+    color: var(--hrj-text-muted);
+}
+
+.hrj-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.4;
+    white-space: nowrap;
+}
+
+.hrj-badge--pass    { background: color-mix(in srgb, var(--hrj-color-pass) 15%, transparent); color: var(--hrj-color-pass); }
+.hrj-badge--warn    { background: color-mix(in srgb, var(--hrj-color-warn) 15%, transparent); color: var(--hrj-color-warn); }
+.hrj-badge--fail    { background: color-mix(in srgb, var(--hrj-color-fail) 15%, transparent); color: var(--hrj-color-fail); }
+.hrj-badge--info    { background: color-mix(in srgb, var(--hrj-color-info) 15%, transparent); color: var(--hrj-color-info); }
+.hrj-badge--orphan  { background: color-mix(in srgb, var(--hrj-color-orphan) 15%, transparent); color: var(--hrj-color-orphan); }
+.hrj-badge--zombie  { background: color-mix(in srgb, var(--hrj-color-zombie) 15%, transparent); color: var(--hrj-color-zombie); }
+.hrj-badge--neutral { background: var(--hrj-bg-row-stripe); color: var(--hrj-text-muted); }
+
+.hrj-banner {
+    padding: 14px 16px;
+    border-radius: var(--hrj-radius);
+    margin-bottom: var(--hrj-spacing);
+    border-left: 4px solid var(--hrj-color-info);
+    background: var(--hrj-bg);
+    border-top: 1px solid var(--hrj-border);
+    border-right: 1px solid var(--hrj-border);
+    border-bottom: 1px solid var(--hrj-border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.hrj-banner--pass { border-left-color: var(--hrj-color-pass); }
+.hrj-banner--warn { border-left-color: var(--hrj-color-warn); }
+.hrj-banner--fail { border-left-color: var(--hrj-color-fail); }
+
+.hrj-banner__icon {
+    font-size: 18px;
+    flex: 0 0 auto;
+}
+
+.hrj-banner__title {
+    font-weight: 600;
+    margin: 0;
+}
+
+.hrj-banner__desc {
+    color: var(--hrj-text-muted);
+    font-size: 12px;
+    margin: 2px 0 0;
+}
+
+.hrj-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--hrj-spacing);
+}
+
+@media (max-width: 800px) {
+    .hrj-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.hrj-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: var(--hrj-radius-sm);
+    border: 1px solid var(--hrj-border);
+    background: var(--hrj-bg);
+    color: var(--hrj-text);
+    cursor: pointer;
+    font-size: 12px;
+    font-family: inherit;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.hrj-btn:hover {
+    background: var(--hrj-bg-elev);
+    border-color: var(--hrj-text-subtle);
+}
+
+.hrj-btn--primary {
+    background: var(--hrj-color-info);
+    color: white;
+    border-color: var(--hrj-color-info);
+}
+
+.hrj-btn--primary:hover {
+    background: color-mix(in srgb, var(--hrj-color-info) 85%, black);
+}
+
+.hrj-btn--danger {
+    background: var(--hrj-color-fail);
+    color: white;
+    border-color: var(--hrj-color-fail);
+}
+
+.hrj-btn[disabled],
+.hrj-btn[aria-busy="true"] {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.hrj-toast {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    background: var(--hrj-bg);
+    border: 1px solid var(--hrj-border);
+    border-left: 4px solid var(--hrj-color-pass);
+    border-radius: var(--hrj-radius);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    padding: 12px 16px;
+    max-width: 360px;
+    z-index: 9999;
+    font-size: 13px;
+}
+
+.hrj-toast--error { border-left-color: var(--hrj-color-fail); }
+
+.hrj-truncate {
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: inline-block;
+    vertical-align: middle;
+}

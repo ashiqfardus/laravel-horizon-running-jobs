@@ -20,6 +20,9 @@ abstract class TestCase extends Orchestra
     {
         $app['config']->set('horizon-running-jobs.distributed', false);
         $app['config']->set('horizon-running-jobs.cache.enabled', false);
+        // Required for `web` middleware (sessions / encrypted cookies) on UI
+        // route tests. Any 32-byte key works for in-memory tests.
+        $app['config']->set('app.key', 'base64:' . base64_encode(str_repeat('a', 32)));
 
         // Horizon's service provider isn't booted in TestBench, so its
         // contracts have no bindings. Most package tests don't touch the
