@@ -26,10 +26,12 @@ Laravel Horizon shows pending, completed, and failed jobs—but not what's **cur
 
 | Package | Versions Supported |
 |---------|-------------------|
-| PHP | 8.0, 8.1, 8.2, 8.3, 8.4 |
-| Laravel | 9.x, 10.x, 11.x, 12.x |
+| PHP | 8.1, 8.2, 8.3, 8.4 |
+| Laravel | 9.x, 10.x, 11.x, 12.x, 13.x |
 | Horizon | 5.x, 6.x |
 | Redis | 6.0+ |
+
+> Laravel 13 requires PHP 8.3+. Laravel 11 / 12 require PHP 8.2+. Composer resolves the correct Laravel version for your PHP automatically.
 
 ---
 
@@ -238,25 +240,41 @@ GET /api/horizon/running-jobs/stats
 {
   "success": true,
   "hostname": "app-server-01",
-  "timestamp": "2026-01-07T10:30:00+00:00",
-  "queues_monitored": ["default"],
+  "timestamp": "2026-04-25T10:30:00+00:00",
+  "queues_monitored": ["default", "emails", "reports"],
   "running_jobs_count": 2,
+  "total_count": 2,
+  "dropped_count": 0,
   "jobs": [
     {
       "job_id": "4b5ecc82-07a7-40db-97db-bfab5ac5c500",
       "job_class": "App\\Jobs\\ProcessOrder",
       "queue": "default",
       "server": "app-server-01",
-      "start_time": "2026-01-07T10:27:26+00:00",
+      "status": "running",
+      "start_time": "2026-04-25T10:27:26+00:00",
+      "start_timestamp": 1745576846,
       "running_for_seconds": 154,
       "running_for_formatted": "2m 34s",
       "attempts": 1,
+      "timeout": 120,
       "tags": ["server:app-server-01", "environment:production"]
     }
   ],
   "warnings": []
 }
 ```
+
+#### Response fields
+
+| Field | Meaning |
+|---|---|
+| `running_jobs_count` | jobs returned in this payload (may be limited by `max_jobs`) |
+| `total_count` | total reserved-set entries found before truncation |
+| `dropped_count` | malformed reserved-set entries skipped; each is logged via `Log::warning` |
+| `jobs[].status` | `"running"` (reservation valid) or `"zombie"` (reservation expired, still in queue) |
+| `jobs[].start_time` / `start_timestamp` | **actual reservation time** (not the Redis expiry score) |
+| `warnings[]` | human-readable summary lines — long-running, zombie count, dropped count |
 
 ### Using the Facade
 
@@ -310,10 +328,25 @@ return [
         'uri' => 'horizon/running-jobs',
     ],
 
-    // Redis connection (null = default)
+    // Redis connection (null = auto-detect from config('horizon.use'))
     'redis_connection' => null,
+
+    // Queue retry_after window in seconds.
+    // Redis stores reserved-set scores as (reservation_time + retry_after).
+    // Leave null to auto-detect from config('queue.connections.<horizon.use>.retry_after'),
+    // falling back to 90. Override only if the heuristic picks the wrong value.
+    'retry_after' => null,
 ];
 ```
+
+### How `status` is decided
+
+Each job in the response has a `status` field:
+
+- `"running"` — the reservation's expiry is still in the future (normal).
+- `"zombie"` — the reservation has expired but the entry is still in `queues:<q>:reserved`. This usually means the worker processing the job died (OOM, SIGKILL) or Horizon hasn't reaped it yet. Warnings include a zombie count.
+
+Previously these jobs were silently dropped from the response. They are now surfaced so operators can see them and release/retry them manually.
 
 ---
 
@@ -598,9 +631,28 @@ Or disable routes entirely and create your own:
 
 ## Testing
 
+### Unit tests
+
 ```bash
 composer test
 ```
+
+Runs the PHPUnit suite via Testbench. No Redis needed — unit tests cover pure logic (duration formatting, server-identifier extraction).
+
+### End-to-end testing against a real Laravel app
+
+A sibling demo app lives at [`../laravel-horizon-running-jobs-demo`](../laravel-horizon-running-jobs-demo). It's a fresh Laravel 13 install that consumes this package via Composer path symlink — edits in this repo are live in the demo with no reinstall.
+
+```bash
+cd ../laravel-horizon-running-jobs-demo
+php artisan horizon                              # terminal 1
+php artisan demo:dispatch-workload               # terminal 2
+php artisan horizon:running-jobs --stats         # terminal 2
+```
+
+Dummy jobs cover: fast (500ms), medium (5-10s), slow (30-60s), flaky (50% failure), memory-heavy (200MB), and stuck (`sleep(9999)` — for orphan-detection testing).
+
+See the demo's [README](../laravel-horizon-running-jobs-demo/README.md) for scenarios.
 
 ---
 
