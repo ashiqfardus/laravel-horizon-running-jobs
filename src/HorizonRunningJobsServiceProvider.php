@@ -44,6 +44,7 @@ class HorizonRunningJobsServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->commands([
                 Commands\ListRunningJobsCommand::class,
+                Commands\ListSupervisorsCommand::class,
             ]);
         }
 

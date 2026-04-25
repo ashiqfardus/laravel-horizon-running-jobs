@@ -1,6 +1,7 @@
 <?php
 
 use Ashiqfardus\HorizonRunningJobs\Controllers\RunningJobsController;
+use Ashiqfardus\HorizonRunningJobs\Controllers\SupervisorsController;
 use Ashiqfardus\HorizonRunningJobs\Http\Middleware\Authorize;
 use Illuminate\Support\Facades\Route;
 
@@ -24,5 +25,8 @@ Route::group([
 
     Route::get($uri . '/stats', [RunningJobsController::class, 'stats'])
         ->name('horizon.running-jobs.stats');
+
+    Route::get('horizon/supervisors', [SupervisorsController::class, 'index'])
+        ->name('horizon.supervisors.index');
 });
 
