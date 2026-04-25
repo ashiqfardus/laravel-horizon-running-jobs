@@ -55,4 +55,41 @@ class HorizonRunningJobsTest extends TestCase
         $this->assertFalse(HorizonRunningJobs::hasAuthCallback());
         $this->assertFalse(HorizonRunningJobs::check(Request::create('/api/horizon/running-jobs')));
     }
+
+    public function test_truthy_non_boolean_callback_return_allows(): void
+    {
+        $this->app['env'] = 'production';
+        HorizonRunningJobs::auth(fn () => 'yes-please');
+
+        $this->assertTrue(HorizonRunningJobs::check(Request::create('/api/horizon/running-jobs')));
+    }
+
+    public function test_falsy_non_boolean_callback_return_denies(): void
+    {
+        $this->app['env'] = 'production';
+        HorizonRunningJobs::auth(fn () => 0);
+
+        $this->assertFalse(HorizonRunningJobs::check(Request::create('/api/horizon/running-jobs')));
+    }
+
+    public function test_null_callback_return_denies(): void
+    {
+        $this->app['env'] = 'production';
+        HorizonRunningJobs::auth(fn () => null);
+
+        $this->assertFalse(HorizonRunningJobs::check(Request::create('/api/horizon/running-jobs')));
+    }
+
+    public function test_throwing_callback_propagates_so_failures_are_visible(): void
+    {
+        $this->app['env'] = 'production';
+        HorizonRunningJobs::auth(function (): bool {
+            throw new \RuntimeException('user_lookup_failed');
+        });
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('user_lookup_failed');
+
+        HorizonRunningJobs::check(Request::create('/api/horizon/running-jobs'));
+    }
 }

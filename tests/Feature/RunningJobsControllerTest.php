@@ -210,6 +210,27 @@ class RunningJobsControllerTest extends TestCase
             ->assertStatus(500)
             ->assertJsonPath('error', 'Failed to fetch statistics');
     }
+
+    public function test_authorize_middleware_runs_at_request_time_for_running_jobs(): void
+    {
+        // Auth callback short-circuits before the manager would be touched.
+        $this->app['env'] = 'production';
+        \Ashiqfardus\HorizonRunningJobs\HorizonRunningJobs::auth(fn () => false);
+
+        $spy = new SpyRunningJobsManager(['distributed' => true, 'cache' => ['enabled' => false]]);
+        $spy->throwOnGetRunningJobs = new \RuntimeException('manager should not be called');
+        $this->app->instance(RunningJobsManager::class, $spy);
+
+        $this->getJson('/api/horizon/running-jobs')->assertStatus(403);
+    }
+
+    public function test_authorize_middleware_runs_at_request_time_for_stats(): void
+    {
+        $this->app['env'] = 'production';
+        \Ashiqfardus\HorizonRunningJobs\HorizonRunningJobs::auth(fn () => false);
+
+        $this->getJson('/api/horizon/running-jobs/stats')->assertStatus(403);
+    }
 }
 
 class SpyRunningJobsManager extends RunningJobsManager
