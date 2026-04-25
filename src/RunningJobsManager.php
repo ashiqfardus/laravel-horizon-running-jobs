@@ -38,7 +38,7 @@ class RunningJobsManager
 
         // Use caching if enabled
         if ($this->config['cache']['enabled'] ?? false) {
-            $cacheKey = $this->getCacheKey($serverId, $showAll, $queues);
+            $cacheKey = $this->buildCacheKey($serverId, $showAll, $queues);
             $ttl = $this->config['cache']['ttl'] ?? 10;
 
             return Cache::remember($cacheKey, $ttl, function () use ($serverId, $showAll, $queues) {
@@ -94,14 +94,16 @@ class RunningJobsManager
     {
         $allJobs = [];
         $warnings = [];
+        $droppedCount = 0;
         $currentTimestamp = time();
         $maxJobs = $this->config['max_jobs'] ?? 1000;
         $longRunningThreshold = $this->config['long_running_threshold'] ?? 300;
 
         foreach ($queues as $queue) {
             try {
-                $jobs = $this->getJobsForQueue($queue, $hostname, $showAll, $currentTimestamp, $maxJobs);
-                $allJobs = array_merge($allJobs, $jobs);
+                $result = $this->getJobsForQueue($queue, $hostname, $showAll, $currentTimestamp, $maxJobs);
+                $allJobs = array_merge($allJobs, $result['jobs']);
+                $droppedCount += $result['dropped'];
             } catch (\Exception $e) {
                 $warnings[] = "Failed to fetch jobs from queue: {$queue}";
                 Log::warning('HorizonRunningJobs: Queue fetch failed', [
@@ -120,15 +122,27 @@ class RunningJobsManager
             $warnings[] = count($longRunning) . " job(s) running over " . ($longRunningThreshold / 60) . " minutes";
         }
 
+        $zombies = array_filter($allJobs, fn($job) => ($job['status'] ?? 'running') === 'zombie');
+        if (!empty($zombies)) {
+            $warnings[] = count($zombies) . " zombie job(s) detected (reservation expired but still in queue)";
+        }
+
+        if ($droppedCount > 0) {
+            $warnings[] = "{$droppedCount} malformed job(s) skipped (see logs)";
+        }
+
         return [
             'jobs' => array_slice($allJobs, 0, $maxJobs),
             'warnings' => $warnings,
             'total_count' => count($allJobs),
+            'dropped_count' => $droppedCount,
         ];
     }
 
     /**
      * Get running jobs for a specific queue.
+     *
+     * @return array{jobs: array<int,array>, dropped: int}
      */
     protected function getJobsForQueue(
         string $queue,
@@ -141,11 +155,12 @@ class RunningJobsManager
         $redis = $this->getRedisConnection();
 
         if (!$redis->exists($key)) {
-            return [];
+            return ['jobs' => [], 'dropped' => 0];
         }
 
         $reservedJobs = $redis->zrange($key, 0, $maxJobs - 1, ['WITHSCORES' => true]);
         $jobs = [];
+        $dropped = 0;
 
         foreach ($reservedJobs as $jobData => $timestamp) {
             try {
@@ -154,19 +169,29 @@ class RunningJobsManager
                 if ($job !== null) {
                     $jobs[] = $job;
                 }
-            } catch (\Exception $e) {
-                // Skip malformed jobs
-                continue;
+            } catch (\Throwable $e) {
+                $dropped++;
+                Log::warning('HorizonRunningJobs: dropped malformed reserved job', [
+                    'queue' => $queue,
+                    'error' => $e->getMessage(),
+                ]);
             }
         }
 
-        return $jobs;
+        return ['jobs' => $jobs, 'dropped' => $dropped];
     }
 
     /**
-     * Parse job data from Redis.
+     * Parse a reserved-set entry into a structured job array.
+     *
+     * Returns:
+     *   - array: a valid job row
+     *   - null:  filtered out (server scope mismatch)
+     * Throws:
+     *   - RuntimeException when the payload is malformed; callers count these
+     *     as "dropped" and log them.
      */
-    protected function parseJobData(
+    public function parseJobData(
         string $jobData,
         float $timestamp,
         string $queue,
@@ -177,7 +202,7 @@ class RunningJobsManager
         $jobDetails = json_decode($jobData, true);
 
         if (!$jobDetails || !isset($jobDetails['data']['command'])) {
-            return null;
+            throw new \RuntimeException('malformed reserved-job payload: missing data.command');
         }
 
         // HYBRID APPROACH: Try tags first, fall back to supervisor_id
@@ -187,21 +212,19 @@ class RunningJobsManager
             return null;
         }
 
-        // Validate timeout
         $timeout = $jobDetails['timeout'] ?? null;
-        if ($timeout !== null && $currentTimestamp > ($timestamp + $timeout)) {
-            return null;
-        }
-
-        $runningFor = $currentTimestamp - (int) $timestamp;
+        $reservedScore = (int) $timestamp;
+        $reservationTime = $reservedScore - $this->resolveRetryAfter();
+        $runningFor = $this->calculateRunningForSeconds($reservedScore, $currentTimestamp);
 
         return [
             'job_id' => $jobDetails['uuid'] ?? 'unknown',
             'job_class' => $jobDetails['displayName'] ?? 'Unknown',
             'queue' => $queue,
             'server' => $serverTag,
-            'start_time' => date('c', (int) $timestamp),
-            'start_timestamp' => (int) $timestamp,
+            'status' => $this->resolveJobStatus($reservedScore, $currentTimestamp),
+            'start_time' => date('c', $reservationTime),
+            'start_timestamp' => $reservationTime,
             'running_for_seconds' => $runningFor,
             'running_for_formatted' => $this->formatDuration($runningFor),
             'attempts' => $jobDetails['attempts'] ?? 0,
@@ -225,16 +248,12 @@ class RunningJobsManager
             }
         }
 
-        // Method 2: Fallback to supervisor_id property (guaranteed to work)
-        if (isset($jobDetails['data']['command'])) {
-            try {
-                $unserialized = @unserialize($jobDetails['data']['command']);
-
-                if ($unserialized && isset($unserialized->supervisor_id)) {
-                    return $unserialized->supervisor_id;
-                }
-            } catch (\Exception $e) {
-                // Unserialize failed
+        // Method 2: Regex-scan the serialized command for supervisor_id.
+        // Safer than unserialize() — no class instantiation, no gadget-chain risk,
+        // and works even when the originating job class isn't autoloadable here.
+        if (isset($jobDetails['data']['command']) && is_string($jobDetails['data']['command'])) {
+            if (preg_match('/s:13:"supervisor_id";s:\d+:"([^"]*)"/', $jobDetails['data']['command'], $matches)) {
+                return $matches[1];
             }
         }
 
@@ -266,7 +285,7 @@ class RunningJobsManager
     /**
      * Get the default queues to monitor.
      */
-    protected function getDefaultQueues(): array
+    public function getDefaultQueues(): array
     {
         // Check package config first
         if (!empty($this->config['queues'])) {
@@ -276,14 +295,14 @@ class RunningJobsManager
         // Try to get from Horizon config - check multiple possible structures
         $queues = [];
 
-        // Method 1: Check defaults.{hostname} (distributed setup)
-        $supervisor = config('horizon.defaults.' . gethostname(), []);
-        if (!empty($supervisor['queue'])) {
-            return (array) $supervisor['queue'];
+        // Method 1: Check defaults[gethostname()] (distributed setup).
+        // Avoid config() dot-notation because hostnames can contain dots.
+        $defaults = config('horizon.defaults', []);
+        if (isset($defaults[gethostname()]['queue'])) {
+            return (array) $defaults[gethostname()]['queue'];
         }
 
         // Method 2: Check all supervisors in defaults and collect queues
-        $defaults = config('horizon.defaults', []);
         foreach ($defaults as $name => $settings) {
             if (!empty($settings['queue'])) {
                 $queues = array_merge($queues, (array) $settings['queue']);
@@ -307,34 +326,102 @@ class RunningJobsManager
     }
 
     /**
+     * Resolve the Redis connection name to query.
+     * Prefers explicit package config, falls back to Horizon's own connection,
+     * then null (Laravel default).
+     */
+    public function getRedisConnectionName(): ?string
+    {
+        return $this->config['redis_connection']
+            ?? config('horizon.use')
+            ?? null;
+    }
+
+    /**
+     * Resolve the queue retry_after window (seconds).
+     * The reserved sorted-set score is (reservation_time + retry_after);
+     * we need retry_after to recover the reservation time.
+     */
+    public function resolveRetryAfter(): int
+    {
+        if (isset($this->config['retry_after']) && $this->config['retry_after'] !== null) {
+            return (int) $this->config['retry_after'];
+        }
+
+        $queueConnection = config('horizon.use') ?? 'redis';
+        $retryAfter = config("queue.connections.{$queueConnection}.retry_after");
+
+        return $retryAfter !== null ? (int) $retryAfter : 90;
+    }
+
+    /**
+     * Compute how long a job has been running given its expiry-score and the current time.
+     * Redis stores the score as (reservation_time + retry_after), so we subtract retry_after
+     * to recover the actual reservation time.
+     */
+    public function calculateRunningForSeconds(int $reservedScore, int $currentTimestamp): int
+    {
+        $reservationTime = $reservedScore - $this->resolveRetryAfter();
+
+        return max(0, $currentTimestamp - $reservationTime);
+    }
+
+    /**
+     * Classify a reserved job:
+     *   - running: reservation is still valid (expiry in the future)
+     *   - zombie:  reservation has expired but the job is still in the reserved set,
+     *              which means a worker died mid-job or Horizon hasn't reaped it yet.
+     */
+    public function resolveJobStatus(int $reservedScore, int $currentTimestamp): string
+    {
+        return $currentTimestamp > $reservedScore ? 'zombie' : 'running';
+    }
+
+    /**
      * Get the Redis connection.
      */
     protected function getRedisConnection()
     {
-        $connection = $this->config['redis_connection'] ?? null;
-        return Redis::connection($connection);
+        return Redis::connection($this->getRedisConnectionName());
     }
 
     /**
-     * Generate cache key.
+     * Build a cache key scoped to the current epoch. Bumping the epoch via
+     * clearCache() instantly invalidates every previously-cached entry without
+     * needing to enumerate keys or rely on cache tags.
      */
-    protected function getCacheKey(string $hostname, bool $showAll, array $queues): string
+    public function buildCacheKey(string $hostname, bool $showAll, array $queues): string
     {
         $prefix = $this->config['cache']['prefix'] ?? 'horizon_running_jobs';
+        $epoch = $this->getCacheEpoch();
         $scope = $showAll ? 'all' : 'local';
         $queueHash = md5(json_encode($queues));
 
-        return "{$prefix}:{$hostname}:{$scope}:{$queueHash}";
+        return "{$prefix}:v{$epoch}:{$hostname}:{$scope}:{$queueHash}";
     }
 
     /**
-     * Clear the running jobs cache.
+     * Current cache epoch. Included in every cache key.
+     */
+    public function getCacheEpoch(): int
+    {
+        return (int) Cache::get($this->cacheEpochKey(), 0);
+    }
+
+    /**
+     * Invalidate all cached running-jobs responses by incrementing the epoch.
      */
     public function clearCache(): void
     {
+        $next = $this->getCacheEpoch() + 1;
+        Cache::forever($this->cacheEpochKey(), $next);
+    }
+
+    protected function cacheEpochKey(): string
+    {
         $prefix = $this->config['cache']['prefix'] ?? 'horizon_running_jobs';
-        // Note: This requires cache driver that supports tags or manual key management
-        Cache::forget($prefix . ':*');
+
+        return "{$prefix}:epoch";
     }
 
     /**
@@ -348,15 +435,18 @@ class RunningJobsManager
         $byServer = [];
         $byQueue = [];
         $byJobClass = [];
+        $byStatus = ['running' => 0, 'zombie' => 0];
 
         foreach ($jobs as $job) {
             $server = $job['server'];
             $queue = $job['queue'];
             $class = $job['job_class'];
+            $status = $job['status'] ?? 'running';
 
             $byServer[$server] = ($byServer[$server] ?? 0) + 1;
             $byQueue[$queue] = ($byQueue[$queue] ?? 0) + 1;
             $byJobClass[$class] = ($byJobClass[$class] ?? 0) + 1;
+            $byStatus[$status] = ($byStatus[$status] ?? 0) + 1;
         }
 
         return [
@@ -364,6 +454,8 @@ class RunningJobsManager
             'by_server' => $byServer,
             'by_queue' => $byQueue,
             'by_job_class' => $byJobClass,
+            'by_status' => $byStatus,
+            'dropped_count' => $result['dropped_count'] ?? 0,
             'longest_running' => $jobs[0] ?? null,
             'warnings' => $result['warnings'],
         ];

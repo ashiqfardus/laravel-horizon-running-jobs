@@ -59,6 +59,9 @@ class ListRunningJobsCommand extends Command
                 $queues
             );
 
+            $totalCount = $result['total_count'] ?? count($result['jobs']);
+            $displayedJobs = array_slice($result['jobs'], 0, $limit);
+
             // JSON output
             if ($asJson) {
                 $this->line(json_encode([
@@ -66,8 +69,10 @@ class ListRunningJobsCommand extends Command
                     'distributed' => $isDistributed,
                     'show_all' => $showAll,
                     'queues' => $queues,
-                    'running_jobs_count' => count($result['jobs']),
-                    'jobs' => array_slice($result['jobs'], 0, $limit),
+                    'shown_count' => count($displayedJobs),
+                    'total_count' => $totalCount,
+                    'truncated' => count($displayedJobs) < $totalCount,
+                    'jobs' => $displayedJobs,
                     'warnings' => $result['warnings'],
                 ], JSON_PRETTY_PRINT));
                 return self::SUCCESS;
@@ -98,14 +103,17 @@ class ListRunningJobsCommand extends Command
 
             // Limit display
             $displayJobs = array_slice($jobs, 0, $limit);
+            $shownCount = count($displayJobs);
 
             // Format for display
             $tableData = array_map(function ($job) {
+                $status = $job['status'] ?? 'running';
                 return [
                     'ID' => substr($job['job_id'], 0, 8) . '...',
                     'Job' => $this->truncate($job['job_class'], 35),
                     'Queue' => $job['queue'],
                     'Server' => $this->truncate($job['server'], 20),
+                    'Status' => $status === 'zombie' ? '⚠ zombie' : 'running',
                     'Started' => date('H:i:s', $job['start_timestamp']),
                     'Duration' => $job['running_for_formatted'],
                     'Attempts' => $job['attempts'],
@@ -113,12 +121,15 @@ class ListRunningJobsCommand extends Command
             }, $displayJobs);
 
             $this->table(
-                ['ID', 'Job', 'Queue', 'Server', 'Started', 'Duration', 'Attempts'],
+                ['ID', 'Job', 'Queue', 'Server', 'Status', 'Started', 'Duration', 'Attempts'],
                 $tableData
             );
 
-            $total = count($jobs);
-            $this->info("✓ Found {$total} running job(s)");
+            if ($shownCount < $totalCount) {
+                $this->info("✓ Showing {$shownCount} of {$totalCount} running job(s)");
+            } else {
+                $this->info("✓ Found {$totalCount} running job(s)");
+            }
 
             // Display warnings
             foreach ($result['warnings'] as $warning) {
@@ -149,7 +160,19 @@ class ListRunningJobsCommand extends Command
         $this->newLine();
 
         $this->info("Total Running: {$stats['total_running']}");
+        if (($stats['dropped_count'] ?? 0) > 0) {
+            $this->warn("Dropped (malformed): {$stats['dropped_count']}");
+        }
         $this->newLine();
+
+        if (!empty($stats['by_status'])) {
+            $this->info("By Status:");
+            foreach ($stats['by_status'] as $status => $count) {
+                $marker = $status === 'zombie' && $count > 0 ? ' ⚠' : '';
+                $this->line("  • {$status}: {$count}{$marker}");
+            }
+            $this->newLine();
+        }
 
         if (!empty($stats['by_server'])) {
             $this->info("By Server:");

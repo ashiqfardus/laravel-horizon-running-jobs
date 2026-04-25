@@ -113,9 +113,27 @@ return [
     |--------------------------------------------------------------------------
     |
     | The Redis connection to use for querying running jobs.
-    | Set to null to use the default connection.
+    | Set to null to auto-detect from config('horizon.use').
     |
     */
     'redis_connection' => null,
+
+    /*
+    |--------------------------------------------------------------------------
+    | Queue Retry-After Window (seconds)
+    |--------------------------------------------------------------------------
+    |
+    | Laravel stores reserved jobs in Redis with a score of
+    |   reservation_time + retry_after
+    | so the package subtracts retry_after to recover the actual reservation
+    | time. Set to null to auto-detect from
+    |   config('queue.connections.<horizon.use>.retry_after')
+    | falling back to 90 (Laravel default).
+    |
+    | Override only if you use a non-default retry_after and the auto-detect
+    | picks up the wrong value (e.g. per-queue differences).
+    |
+    */
+    'retry_after' => null,
 ];
 

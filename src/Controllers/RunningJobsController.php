@@ -31,6 +31,7 @@ class RunningJobsController extends Controller
                 'queues_monitored' => $queues,
                 'running_jobs_count' => count($result['jobs']),
                 'total_count' => $result['total_count'],
+                'dropped_count' => $result['dropped_count'] ?? 0,
                 'jobs' => $result['jobs'],
                 'warnings' => $result['warnings'],
             ]);
@@ -69,23 +70,18 @@ class RunningJobsController extends Controller
     }
 
     /**
-     * Get queues from request or config.
+     * Get queues from request (comma-separated) or fall back to the manager's
+     * auto-detection so CLI and HTTP stay consistent.
      */
     protected function getQueues(): array
     {
         $queuesParam = request()->query('queues');
 
         if ($queuesParam) {
-            return explode(',', $queuesParam);
+            return array_values(array_filter(array_map('trim', explode(',', $queuesParam))));
         }
 
-        $configQueues = config('horizon-running-jobs.queues');
-        if (!empty($configQueues)) {
-            return $configQueues;
-        }
-
-        $supervisor = config('horizon.defaults.' . gethostname(), []);
-        return $supervisor['queue'] ?? ['default'];
+        return $this->manager->getDefaultQueues();
     }
 }
 
