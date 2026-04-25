@@ -100,6 +100,61 @@ class RunningJobsManagerIntegrationTest extends IntegrationTestCase
         $this->assertSame(2, count($all['jobs']));
     }
 
+    public function test_distributed_mode_with_three_servers_isolates_each_correctly(): void
+    {
+        // Three instances sharing one Redis. Each owns some jobs, sees only
+        // its own by default, can opt-in to all-cluster view via showAll.
+        $this->seedReservedJob('default', $this->makePayload(['uuid' => 'a-1', 'tags' => ['server:app-A']]));
+        $this->seedReservedJob('default', $this->makePayload(['uuid' => 'a-2', 'tags' => ['server:app-A']]));
+        $this->seedReservedJob('default', $this->makePayload(['uuid' => 'b-1', 'tags' => ['server:app-B']]));
+        $this->seedReservedJob('default', $this->makePayload(['uuid' => 'c-1', 'tags' => ['server:app-C']]));
+        $this->seedReservedJob('default', $this->makePayload(['uuid' => 'c-2', 'tags' => ['server:app-C']]));
+        $this->seedReservedJob('default', $this->makePayload(['uuid' => 'c-3', 'tags' => ['server:app-C']]));
+
+        $manager = $this->manager(distributed: true);
+
+        // app-A sees its 2 jobs only
+        $appA = $manager->getRunningJobs('app-A', false, ['default']);
+        $appAIds = collect($appA['jobs'])->pluck('job_id')->sort()->values()->all();
+        $this->assertSame(['a-1', 'a-2'], $appAIds);
+
+        // app-B sees its 1
+        $appB = $this->manager(distributed: true)->getRunningJobs('app-B', false, ['default']);
+        $this->assertSame(['b-1'], collect($appB['jobs'])->pluck('job_id')->all());
+
+        // app-C sees its 3
+        $appC = $this->manager(distributed: true)->getRunningJobs('app-C', false, ['default']);
+        $this->assertCount(3, $appC['jobs']);
+
+        // Any instance with showAll=true sees everything
+        $clusterView = $this->manager(distributed: true)->getRunningJobs('app-A', true, ['default']);
+        $this->assertCount(6, $clusterView['jobs']);
+        $this->assertSame(6, $clusterView['total_count']);
+    }
+
+    public function test_distributed_mode_supervisor_id_fallback_when_tag_missing(): void
+    {
+        // No `server:` tag, but the payload's serialized command contains a
+        // `supervisor_id` property that the package can extract via regex.
+        $this->redis()->zadd('queues:default:reserved', time() + 80, json_encode([
+            'uuid' => 'fallback-job',
+            'displayName' => 'App\\Jobs\\Test',
+            'job' => 'Illuminate\\Queue\\CallQueuedHandler@call',
+            'maxTries' => 1,
+            'timeout' => 60,
+            'data' => ['command' => 'O:8:"App\\Test":1:{s:13:"supervisor_id";s:5:"app-A";}'],
+            'attempts' => 1,
+            'tags' => [],
+        ]));
+
+        $manager = $this->manager(distributed: true);
+        $result = $manager->getRunningJobs('app-A', false, ['default']);
+
+        $this->assertCount(1, $result['jobs']);
+        $this->assertSame('fallback-job', $result['jobs'][0]['job_id']);
+        $this->assertSame('app-A', $result['jobs'][0]['server']);
+    }
+
     public function test_job_marked_orphaned_when_tagged_supervisor_not_in_live_set(): void
     {
         // Seed a reserved job tagged with 'web-01' but no supervisor in the

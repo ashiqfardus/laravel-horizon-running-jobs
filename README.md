@@ -205,12 +205,19 @@ Visit `/horizon/queue-monitor` in your app. Auth is gated by the same callback a
 
 Layout:
 
-- **Top banner** — overall health (PASS / WARN / FAIL) plus per-check findings
+- **Top banner** — overall health (PASS / WARN / FAIL) plus per-check findings as a stacked list
 - **Supervisors panel** — every supervisor in Horizon's registry, with status, PID, queues, expiry
 - **Queue depth panel** — pending / reserved / delayed counts per queue
-- **Running jobs table** — orphan and zombie badges, inline release button on rows that need attention
+- **Running jobs table** — orphan and zombie badges (with icon prefixes for color-blind a11y), inline `release` button on rows that need attention, and a "release all" bulk action when ≥1 orphan or zombie is present
 
-Polling: each panel polls a per-component endpoint on its own interval (banner 5s, supervisors 5s, queues 5s, jobs 3s). No page reload needed; tables re-render in place.
+Interactivity:
+
+- **Click any row** in running jobs to drill down into the full job payload (class, UUID, queue, server, status, timing, attempts, timeout, tags)
+- **Pause auto-refresh** per panel — every panel header has a ⏸/▶ toggle so you can read a row without it disappearing on the next poll
+- **Custom confirm modal** for release actions (showing job summary) — no browser-native `confirm()` dialog
+- **Toast feedback** on every release with success / failure count
+
+Polling: each panel polls a per-component endpoint on its own interval (banner 5s, supervisors 5s, queues 5s, jobs 3s). No page reload needed; tables re-render in place with a brief fade. Honors `prefers-reduced-motion`.
 
 Disable the route entirely:
 

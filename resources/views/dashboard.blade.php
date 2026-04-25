@@ -39,14 +39,24 @@
                 const interval = config && config.interval;
                 return {
                     timer: null,
+                    paused: false,
                     start: function () {
-                        if (!url || !interval) return;
+                        if (!url || !interval || this.paused) return;
                         const self = this;
                         this.timer = setInterval(function () { self.refresh(); }, interval);
                     },
                     stop: function () {
                         if (this.timer) clearInterval(this.timer);
                         this.timer = null;
+                    },
+                    togglePause: function () {
+                        this.paused = !this.paused;
+                        if (this.paused) {
+                            this.stop();
+                        } else {
+                            this.start();
+                            this.refresh();
+                        }
                     },
                     refresh: async function () {
                         try {
@@ -76,44 +86,55 @@
                 };
             }
 
+            // Force every panel on the page to refresh — used after release/bulk
+            // actions so the user sees the new state without waiting for a poll.
+            function refreshAllPanels() {
+                document.querySelectorAll('[data-hrj-panel]').forEach(function (el) {
+                    if (el._x_dataStack && el._x_dataStack[0] && typeof el._x_dataStack[0].refresh === 'function') {
+                        el._x_dataStack[0].refresh();
+                    }
+                });
+            }
+
+            async function postRelease(url, body) {
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': csrfToken(),
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'Accept': 'application/json',
+                    },
+                    body: JSON.stringify(body),
+                });
+                return [res, await res.json().catch(function () { return {}; })];
+            }
+
             function hrjReleaseButton(config) {
                 const url = config && config.url;
                 const jobId = config && config.jobId;
                 return {
+                    open: false,
                     busy: false,
-                    release: async function () {
+                    jobClass: (config && config.jobClass) || '',
+                    queue: (config && config.queue) || '',
+                    reason: (config && config.reason) || '',
+                    cancel: function () {
                         if (this.busy) return;
-                        if (!confirm('Release this job back to the pending queue?')) return;
-
+                        this.open = false;
+                    },
+                    submit: async function () {
+                        if (this.busy) return;
                         this.busy = true;
                         try {
-                            const res = await fetch(url, {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'X-CSRF-TOKEN': csrfToken(),
-                                    'X-Requested-With': 'XMLHttpRequest',
-                                    'Accept': 'application/json',
-                                },
-                                body: JSON.stringify({ job_id: jobId }),
-                            });
-                            const body = await res.json().catch(function () { return {}; });
-
+                            const [res, body] = await postRelease(url, { job_id: jobId });
                             if (!res.ok || body.success !== true) {
                                 showToast(body.message || ('Release failed (HTTP ' + res.status + ')'), 'error');
                                 return;
                             }
-
                             showToast('Released job ' + jobId.substr(0, 8) + '…');
-
-                            // Force every panel on the page to refresh so the released
-                            // job disappears from view immediately rather than waiting
-                            // for the next poll tick.
-                            document.querySelectorAll('[data-hrj-panel]').forEach(function (el) {
-                                if (el._x_dataStack && el._x_dataStack[0] && typeof el._x_dataStack[0].refresh === 'function') {
-                                    el._x_dataStack[0].refresh();
-                                }
-                            });
+                            this.open = false;
+                            refreshAllPanels();
                         } catch (e) {
                             console.error('[hrj] release request failed', e);
                             showToast('Release failed: ' + (e && e.message ? e.message : 'network error'), 'error');
@@ -124,15 +145,65 @@
                 };
             }
 
+            function hrjBulkRelease(config) {
+                const url = config && config.url;
+                return {
+                    open: false,
+                    busy: false,
+                    target: 'orphaned',
+                    submit: async function () {
+                        if (this.busy) return;
+                        this.busy = true;
+                        try {
+                            const payload = {};
+                            payload[this.target] = true;
+                            const [res, body] = await postRelease(url, payload);
+                            if (!res.ok || body.success !== true) {
+                                showToast(body.message || ('Bulk release failed (HTTP ' + res.status + ')'), 'error');
+                                return;
+                            }
+                            const n = body.released || 0;
+                            showToast(n === 0 ? 'No matching jobs to release.' : ('Released ' + n + ' job(s).'));
+                            this.open = false;
+                            refreshAllPanels();
+                        } catch (e) {
+                            console.error('[hrj] bulk release request failed', e);
+                            showToast('Bulk release failed: ' + (e && e.message ? e.message : 'network error'), 'error');
+                        } finally {
+                            this.busy = false;
+                        }
+                    },
+                };
+            }
+
+            function hrjJobDetails() {
+                return {
+                    open: false,
+                    job: null,
+                    show: function (job) {
+                        this.job = job;
+                        this.open = true;
+                    },
+                    close: function () {
+                        this.open = false;
+                        this.job = null;
+                    },
+                };
+            }
+
             // Make available globally for x-data="hrjPanel({...})" expressions.
             window.hrjPanel = hrjPanel;
             window.hrjReleaseButton = hrjReleaseButton;
+            window.hrjBulkRelease = hrjBulkRelease;
+            window.hrjJobDetails = hrjJobDetails;
 
             // Also register as Alpine data factories for x-data="hrjPanel" (no parens).
             document.addEventListener('alpine:init', function () {
                 if (window.Alpine) {
                     window.Alpine.data('hrjPanel', hrjPanel);
                     window.Alpine.data('hrjReleaseButton', hrjReleaseButton);
+                    window.Alpine.data('hrjBulkRelease', hrjBulkRelease);
+                    window.Alpine.data('hrjJobDetails', hrjJobDetails);
                 }
             });
         })();

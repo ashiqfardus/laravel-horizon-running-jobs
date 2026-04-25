@@ -16,4 +16,6 @@
     </div>
 
     <x-horizon-running-jobs::running-jobs-table :poll="$jobsPoll" />
+
+    <x-horizon-running-jobs::job-details-modal />
 </div>

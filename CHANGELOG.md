@@ -4,6 +4,25 @@ All notable changes to `horizon-running-jobs` will be documented in this file.
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-04-25
+
+### Added
+
+- **Custom release-confirmation modal** replaces the browser-native `confirm()` dialog. Shows the job's class, queue, UUID, and reason ("orphan" / "zombie" / "orphan + zombie") before the user commits to the action. Closes on Esc, click-outside, or Cancel.
+- **Bulk release button** — when the running-jobs panel detects orphans or zombies, a "release all" button appears next to the panel header. Confirms with a modal explaining what will happen, then POSTs to the release endpoint with `{orphaned: true}` or `{zombie: true}`. Equivalent to running `php artisan horizon:release --orphaned --force` from the dashboard.
+- **Job payload drill-down** — clicking any row in the running-jobs panel opens a modal with the full job payload: class, UUID, queue, server, status, start time, duration, attempts, timeout, and all tags. Useful for distinguishing between multiple instances of the same job class.
+- **Pause / resume auto-refresh** — every panel header now has a pause button. While paused the panel keeps its current state; clicking play resumes polling and triggers an immediate refresh.
+- **Status badge icons** — every status badge (pass / warn / fail / orphan / zombie) now has an icon prefix (✓ / ⚠ / ✗ / ◯ / ☠) so the signal isn't conveyed by color alone. Better for color-blind operators.
+- **Subtle fade-in transition** on panel and banner refreshes (220ms). Respects `prefers-reduced-motion`. Makes auto-refresh feel less jumpy.
+
+### Changed
+
+- The release HTTP endpoint (`POST /horizon/queue-monitor/release`) now accepts three mutually-exclusive targeting modes: `job_id`, `orphaned: true`, or `zombie: true`. Passing zero or more than one returns 422.
+
+### Fixed
+
+- Distributed-mode filtering now has explicit integration test coverage with three concurrent instances (previously: only two-server scenario tested).
+
 ## [2.0.0] - 2026-04-25
 
 ### Added

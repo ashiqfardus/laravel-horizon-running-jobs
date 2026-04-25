@@ -20,9 +20,19 @@
     <div class="hrj-panel">
         <div class="hrj-panel__header">
             <h3 class="hrj-panel__title">Supervisors</h3>
-            <span class="hrj-panel__meta">
-                {{ count($supervisors) }} total{{ count($stale) > 0 ? ' • ' . count($stale) . ' stale' : '' }}
-            </span>
+            <div class="hrj-panel__controls">
+                <span class="hrj-panel__meta">
+                    {{ count($supervisors) }} total{{ count($stale) > 0 ? ' • ' . count($stale) . ' stale' : '' }}
+                </span>
+                @if($poll > 0)
+                    <button type="button" class="hrj-icon-btn"
+                        @click="togglePause()"
+                        :aria-pressed="paused"
+                        :title="paused ? 'Resume auto-refresh' : 'Pause auto-refresh'"
+                        :aria-label="paused ? 'Resume auto-refresh' : 'Pause auto-refresh'"
+                    ><span x-show="!paused">⏸</span><span x-show="paused" x-cloak>▶</span></button>
+                @endif
+            </div>
         </div>
         <div class="hrj-panel__body">
             @if(empty($supervisors))

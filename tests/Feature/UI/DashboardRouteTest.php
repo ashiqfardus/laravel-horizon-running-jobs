@@ -125,6 +125,88 @@ class DashboardRouteTest extends TestCase
             ->assertJsonPath('success', false);
     }
 
+    public function test_release_endpoint_rejects_no_targeting_mode(): void
+    {
+        $this->postJson('/horizon/queue-monitor/release', [])
+            ->assertStatus(422)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Specify a job_id, orphaned=true, or zombie=true.');
+    }
+
+    public function test_release_endpoint_rejects_multiple_targeting_modes(): void
+    {
+        $this->postJson('/horizon/queue-monitor/release', [
+            'job_id' => 'abc',
+            'orphaned' => true,
+        ])
+            ->assertStatus(422)
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'job_id, orphaned, and zombie are mutually exclusive — pick one.');
+    }
+
+    public function test_release_endpoint_bulk_orphaned_invokes_releaser_with_correct_criteria(): void
+    {
+        $fakeReleaser = new class extends \Ashiqfardus\HorizonRunningJobs\JobReleaser {
+            public ?array $capturedCriteria = null;
+            public bool $releaseInvoked = false;
+
+            public function __construct() {}
+
+            public function findReleasable(array $criteria): array
+            {
+                $this->capturedCriteria = $criteria;
+                return [
+                    ['job_id' => 'a', 'queue' => 'default', 'reason' => 'orphaned', 'payload' => 'p1'],
+                    ['job_id' => 'b', 'queue' => 'default', 'reason' => 'orphaned', 'payload' => 'p2'],
+                ];
+            }
+
+            public function release(array $items): int
+            {
+                $this->releaseInvoked = true;
+                return count($items);
+            }
+        };
+
+        $this->app->instance(\Ashiqfardus\HorizonRunningJobs\JobReleaser::class, $fakeReleaser);
+
+        $this->postJson('/horizon/queue-monitor/release', ['orphaned' => true])
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('released', 2)
+            ->assertJsonPath('mode', 'orphaned');
+
+        $this->assertSame(['orphaned' => true], $fakeReleaser->capturedCriteria);
+        $this->assertTrue($fakeReleaser->releaseInvoked);
+    }
+
+    public function test_release_endpoint_bulk_zombie_invokes_releaser_with_correct_criteria(): void
+    {
+        $fakeReleaser = new class extends \Ashiqfardus\HorizonRunningJobs\JobReleaser {
+            public ?array $capturedCriteria = null;
+
+            public function __construct() {}
+
+            public function findReleasable(array $criteria): array
+            {
+                $this->capturedCriteria = $criteria;
+                return [];
+            }
+
+            public function release(array $items): int { return 0; }
+        };
+
+        $this->app->instance(\Ashiqfardus\HorizonRunningJobs\JobReleaser::class, $fakeReleaser);
+
+        $this->postJson('/horizon/queue-monitor/release', ['zombie' => true])
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('released', 0)
+            ->assertJsonPath('mode', 'zombie');
+
+        $this->assertSame(['zombie' => true], $fakeReleaser->capturedCriteria);
+    }
+
     public function test_release_endpoint_happy_path_invokes_releaser(): void
     {
         $fakeReleaser = new class extends \Ashiqfardus\HorizonRunningJobs\JobReleaser {

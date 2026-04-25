@@ -58,6 +58,23 @@
     box-shadow: var(--hrj-shadow);
     margin-bottom: var(--hrj-spacing);
     overflow: hidden;
+    animation: hrj-fade-in 220ms ease-out;
+}
+
+.hrj-banner {
+    animation: hrj-fade-in 220ms ease-out;
+}
+
+@keyframes hrj-fade-in {
+    from { opacity: 0.55; }
+    to   { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .hrj-panel,
+    .hrj-banner {
+        animation: none;
+    }
 }
 
 .hrj-panel__header {
@@ -79,6 +96,34 @@
     color: var(--hrj-text-muted);
     font-size: 12px;
     font-family: var(--hrj-font-mono);
+}
+
+.hrj-panel__controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.hrj-icon-btn {
+    border: none;
+    background: transparent;
+    color: var(--hrj-text-muted);
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: var(--hrj-radius-sm);
+    font-size: 13px;
+    line-height: 1;
+    font-family: inherit;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.hrj-icon-btn:hover {
+    color: var(--hrj-text);
+    background: var(--hrj-bg-row-stripe);
+}
+
+.hrj-icon-btn[aria-pressed="true"] {
+    color: var(--hrj-color-warn);
 }
 
 .hrj-panel__body {
@@ -134,7 +179,9 @@
 }
 
 .hrj-badge {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     padding: 2px 8px;
     border-radius: 9999px;
     font-size: 11px;
@@ -143,6 +190,21 @@
     white-space: nowrap;
 }
 
+/* Icon prefix on status badges so the signal isn't color-only —
+   important for color-blind operators. */
+.hrj-badge::before {
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.hrj-badge--pass::before    { content: '✓'; }
+.hrj-badge--warn::before    { content: '⚠'; }
+.hrj-badge--fail::before    { content: '✗'; }
+.hrj-badge--orphan::before  { content: '◯'; }
+.hrj-badge--zombie::before  { content: '☠'; }
+.hrj-badge--info::before    { content: 'ℹ'; }
+
 .hrj-badge--pass    { background: color-mix(in srgb, var(--hrj-color-pass) 15%, transparent); color: var(--hrj-color-pass); }
 .hrj-badge--warn    { background: color-mix(in srgb, var(--hrj-color-warn) 15%, transparent); color: var(--hrj-color-warn); }
 .hrj-badge--fail    { background: color-mix(in srgb, var(--hrj-color-fail) 15%, transparent); color: var(--hrj-color-fail); }
@@ -150,6 +212,7 @@
 .hrj-badge--orphan  { background: color-mix(in srgb, var(--hrj-color-orphan) 15%, transparent); color: var(--hrj-color-orphan); }
 .hrj-badge--zombie  { background: color-mix(in srgb, var(--hrj-color-zombie) 15%, transparent); color: var(--hrj-color-zombie); }
 .hrj-badge--neutral { background: var(--hrj-bg-row-stripe); color: var(--hrj-text-muted); }
+.hrj-badge--neutral::before { content: ''; }
 
 .hrj-banner {
     padding: 14px 16px;
@@ -290,6 +353,73 @@
 
 [x-cloak] {
     display: none !important;
+}
+
+.hrj-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 9999;
+    animation: hrj-fade-in 140ms ease-out;
+}
+
+.hrj-modal {
+    background: var(--hrj-bg);
+    border: 1px solid var(--hrj-border);
+    border-radius: var(--hrj-radius);
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.35);
+    padding: 20px 24px;
+    width: 100%;
+    max-width: 460px;
+    color: var(--hrj-text);
+    font-family: var(--hrj-font);
+}
+
+.hrj-modal h3 {
+    margin: 0 0 6px;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.hrj-modal p {
+    margin: 0 0 14px;
+    color: var(--hrj-text-muted);
+    font-size: 13px;
+}
+
+.hrj-modal__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 18px;
+}
+
+.hrj-job-summary {
+    background: var(--hrj-bg-row-stripe);
+    border-radius: var(--hrj-radius-sm);
+    padding: 10px 12px;
+    font-size: 12px;
+    font-family: var(--hrj-font-mono);
+    line-height: 1.7;
+}
+
+.hrj-job-summary__row {
+    display: flex;
+    gap: 10px;
+}
+
+.hrj-job-summary__label {
+    color: var(--hrj-text-muted);
+    flex: 0 0 70px;
+}
+
+.hrj-job-summary__value {
+    color: var(--hrj-text);
+    word-break: break-all;
 }
 
 .hrj-toast {
