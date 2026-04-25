@@ -4,87 +4,101 @@
 [![Total Downloads](https://img.shields.io/packagist/dt/ashiqfardus/horizon-running-jobs.svg?style=flat-square)](https://packagist.org/packages/ashiqfardus/horizon-running-jobs)
 [![License](https://img.shields.io/packagist/l/ashiqfardus/horizon-running-jobs.svg?style=flat-square)](https://packagist.org/packages/ashiqfardus/horizon-running-jobs)
 
-**Monitor currently running jobs in Laravel Horizon.**
+**See what's currently running in Laravel Horizon — across one server or many — and act on stuck jobs without leaving the dashboard.**
 
-Laravel Horizon shows pending, completed, and failed jobs—but not what's **currently running**. This package fills that gap for single-instance setups and distributed deployments where multiple Laravel applications share a single Redis.
+Horizon's own UI shows pending, completed, and failed jobs but treats "running" as a black box. This package fills that gap with a Blade dashboard, a CLI suite, and an HTTP API. It works on a single application or on any number of instances sharing a Redis. Reserved jobs whose worker died (orphans), reservations that expired without cleanup (zombies), and supervisors that have stopped heartbeating (stale) are all surfaced and recoverable.
 
 ---
 
-## Features
+## Table of contents
 
-- 🔍 **Real-time Monitoring** - See jobs as they execute
-- 🖥️ **CLI Command** - `php artisan horizon:running-jobs`
-- 🌐 **HTTP API** - JSON endpoint for dashboards
-- 🏢 **Distributed-Aware** - Filter by the current instance or view all jobs across instances sharing the same Redis
-- ⏱️ **Duration Tracking** - See how long each job has been running
-- 📊 **Statistics** - Aggregate stats by server, queue, and job class
-- 💾 **Response Caching** - Configurable caching for high-traffic APIs
+- [What you get](#what-you-get)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Setup](#setup)
+- [Concepts: running, zombie, orphan, stale](#concepts-running-zombie-orphan-stale)
+- [Browser dashboard](#browser-dashboard)
+- [CLI commands](#cli-commands)
+- [HTTP API](#http-api)
+- [Securing access](#securing-access)
+- [Configuration reference](#configuration-reference)
+- [Using the facade](#using-the-facade)
+- [How it works internally](#how-it-works-internally)
+- [Upgrading from v1.0](#upgrading-from-v10)
+- [Testing](#testing)
+- [Contributing](#contributing)
+
+---
+
+## What you get
+
+| Surface | What it shows / does |
+|---|---|
+| **`/horizon/queue-monitor`** | Standalone Blade dashboard — health banner, supervisor table, queue depths, running jobs with orphan/zombie badges, inline release buttons. Auto-refreshes. |
+| **`<x-horizon-running-jobs::*>`** | Five composable Blade components (`dashboard`, `diagnose-banner`, `supervisors-panel`, `queues-panel`, `running-jobs-table`) you can drop into your own admin pages. |
+| **`horizon:running-jobs`** | List currently-running jobs. Filter by queue, server, orphan-only. `--watch` for live refresh. `--stats` for aggregates. |
+| **`horizon:queues`** | Per-queue depth: pending / reserved / delayed / total. |
+| **`horizon:supervisors`** | Every Horizon supervisor + master process across the deployment, with stale flagging. |
+| **`horizon:diagnose`** | One-shot health check across supervisors, jobs, and queue depths. Exits non-zero on failure — drop straight into cron. |
+| **`horizon:release`** | Recover stuck reserved jobs by ID, or all orphans / zombies. Atomic. Confirms before applying. |
+| **`GET /api/horizon/*`** | JSON endpoints for everything above (auth-gated, throttled). |
 
 ---
 
 ## Requirements
 
-| Package | Versions Supported |
-|---------|-------------------|
+| Component | Versions |
+|---|---|
 | PHP | 8.1, 8.2, 8.3, 8.4 |
 | Laravel | 9.x, 10.x, 11.x, 12.x, 13.x |
 | Horizon | 5.x, 6.x |
 | Redis | 6.0+ |
 
-> Laravel 13 requires PHP 8.3+. Laravel 11 / 12 require PHP 8.2+. Composer resolves the correct Laravel version for your PHP automatically.
+Composer resolves the right Laravel version for your PHP automatically. Laravel 13 requires PHP 8.3+; Laravel 11/12 require PHP 8.2+.
 
 ---
 
 ## Installation
 
-### Step 1: Install via Composer
-
 ```bash
 composer require ashiqfardus/horizon-running-jobs
 ```
 
-### Step 2: Publish Configuration
+Publish the config (optional — defaults are fine for most apps):
 
 ```bash
 php artisan vendor:publish --tag=horizon-running-jobs-config
 ```
 
-### Step 3: Choose Your Setup
+That's it. The dashboard at `/horizon/queue-monitor`, all CLI commands, and the HTTP API are wired up automatically. In a `local` or `testing` environment they're open; in any other environment they require an [auth callback](#securing-access) before responding.
 
-#### 🖥️ Single Server Setup (Default)
+### Optional publishables
 
-If you have **one application server** with Redis on the same or separate machine, no additional configuration is needed. The package works out of the box:
-
-```php
-// config/horizon-running-jobs.php
-'distributed' => false,  // Default - shows all running jobs
-```
-
-**That's it!** Just run:
 ```bash
-php artisan horizon:running-jobs
+# Fork the Blade views to customize markup / structure
+php artisan vendor:publish --tag=horizon-running-jobs-views
+
+# Publish the CSS to serve from your own public directory
+php artisan vendor:publish --tag=horizon-running-jobs-css
 ```
 
-#### 🌐 Distributed Setup (Shared Redis)
+---
 
-Enable distributed mode whenever **more than one Laravel application instance shares a single Redis**. That covers any of:
+## Setup
 
-- Several apps on the same machine
-- Apps spread across multiple hosts
-- Containers / pods pointing at the same Redis service
+### Single server (default)
 
-```php
-// config/horizon-running-jobs.php
-'distributed' => true,
-```
+Nothing to configure. The package reads the Redis connection Horizon is using and surfaces everything reserved, regardless of which worker reserved it.
 
-With this enabled, each instance only sees jobs reserved by its own Horizon supervisor. Use `--all` (CLI) or `?all=true` (HTTP) to view everything across the cluster.
+### Distributed (multiple instances sharing one Redis)
 
-**Server identification depends on your `horizon.php` setup:**
+Set `distributed => true` in `config/horizon-running-jobs.php`. Each instance will only see jobs reserved by its own Horizon supervisor; pass `--all` (CLI) or `?all=true` (HTTP) to see everything across the cluster.
 
-##### Option A: Using `gethostname()` (Auto-detected ✅)
+This applies to any topology where more than one Laravel instance points at the same Redis: multiple machines, containers / pods, even multiple instances on a single host. The discriminator is *shared Redis*, not *multiple servers*.
 
-If your `horizon.php` keys supervisors by `gethostname()`:
+How the package identifies "this instance" depends on your `config/horizon.php`:
+
+**Auto-detect (works out of the box if your supervisor key is `gethostname()`):**
 
 ```php
 // config/horizon.php
@@ -96,11 +110,7 @@ If your `horizon.php` keys supervisors by `gethostname()`:
 ],
 ```
 
-No additional configuration needed — each instance automatically identifies itself by its hostname. Works for separate hosts; for multiple instances on one machine, see Option B.
-
-##### Option B: Using Static Names (Manual config required)
-
-When each instance uses a fixed supervisor name (typical for containers, multi-tenant single-host deployments, or any setup where `gethostname()` doesn't uniquely identify the instance):
+**Static names (containers, multi-tenant, anywhere `gethostname()` isn't unique):**
 
 ```php
 // config/horizon.php
@@ -110,189 +120,228 @@ When each instance uses a fixed supervisor name (typical for containers, multi-t
 ],
 ```
 
-Tell each instance which supervisor it is — usually from an env var so the same image can be deployed to multiple targets:
-
 ```php
 // config/horizon-running-jobs.php
 'server_identifier' => env('HORIZON_SUPERVISOR_NAME'),
 ```
 
-Then set the env var per instance:
-
 ```bash
-# Instance 1
+# In each instance's .env
 HORIZON_SUPERVISOR_NAME=supervisor-01
-
-# Instance 2
-HORIZON_SUPERVISOR_NAME=supervisor-02
 ```
 
-For containers / pods, set the env var via your orchestrator (Kubernetes downward API, Docker Compose service name, etc.).
+### Optional: `TracksServer` trait
 
----
-
-**Then** add the `TracksServer` trait to your job classes:
+If your jobs don't already tag themselves with `server:<hostname>` via Horizon's `tags()` method, add the trait so the package can match running jobs to the supervisor that reserved them:
 
 ```php
-<?php
-
-namespace App\Jobs;
-
-use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Foundation\Bus\Dispatchable;
-use Illuminate\Bus\Queueable;
-use Illuminate\Queue\InteractsWithQueue;
-use Illuminate\Queue\SerializesModels;
 use Ashiqfardus\HorizonRunningJobs\Traits\TracksServer;
 
-class YourJob implements ShouldQueue
+class ProcessOrder implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
-    use TracksServer; // ← Add this trait
+    use TracksServer;
 
     public function __construct()
     {
-        $this->initializeServerTracking(); // ← Call in constructor
-    }
-
-    public function handle(): void
-    {
-        // Your job logic
+        $this->initializeServerTracking();
     }
 }
 ```
 
-This allows filtering jobs by server:
-```bash
-# Show jobs on current server only
-php artisan horizon:running-jobs
-
-# Show jobs from all servers
-php artisan horizon:running-jobs --all
-```
-
-That's it! 🎉
+The trait is purely additive — it doesn't replace `tags()` if you already have one.
 
 ---
 
-## Usage
+## Concepts: running, zombie, orphan, stale
 
-### CLI Command
+Four states. Read these once and the dashboard makes immediate sense.
+
+### `running` — normal
+
+A job is in `queues:<q>:reserved` (Redis sorted set), its expiry score is in the future, and the supervisor that reserved it is alive and heartbeating. The worker is processing it.
+
+### `zombie` — reservation expired
+
+The reserved-set entry's score is in the past. The reservation timed out without the worker either completing the job or releasing it cleanly. Causes:
+
+- The worker process died (OOM, SIGKILL) before finishing
+- The job exceeded the queue's `retry_after` window
+- Horizon hasn't reaped the entry yet
+
+A zombie blocks its queue slot until something releases or removes it.
+
+### `orphan` — worker is gone
+
+The job's `server:<name>` tag refers to a supervisor that's not in Horizon's live supervisor set anymore. The worker that started this job is gone. The job is structurally stuck — no one will finish it.
+
+A job can be both zombie *and* orphan (`⚠ orphan + zombie`).
+
+### `stale` — supervisor
+
+Different layer. A *supervisor* (worker process manager) entry exists in Redis but its heartbeat expiry is in the past beyond a small grace window. Could mean the supervisor process died, the master stopped pinging it, or there's general Redis lag. A stale supervisor *causes* orphans on jobs it reserved.
+
+### Relationships
+
+```
+                      Healthy ──────────────────────────┐
+                         │                              │
+                         ▼                              ▼
+   Worker dies ── creates ▶ zombie       Supervisor dies ── creates ▶ stale
+                                                                        │
+                                                            ▼
+                                          Jobs reserved by it become ▶ orphan
+```
+
+Recovery: zombies and orphans are recovered by **releasing** them — moving them back to the pending list so a healthy worker can pick them up. Use the dashboard's inline release button or the CLI command `horizon:release`.
+
+---
+
+## Browser dashboard
+
+### Standalone page
+
+Visit `/horizon/queue-monitor` in your app. Auth is gated by the same callback as the JSON API ([see below](#securing-access)).
+
+Layout:
+
+- **Top banner** — overall health (PASS / WARN / FAIL) plus per-check findings
+- **Supervisors panel** — every supervisor in Horizon's registry, with status, PID, queues, expiry
+- **Queue depth panel** — pending / reserved / delayed counts per queue
+- **Running jobs table** — orphan and zombie badges, inline release button on rows that need attention
+
+Polling: each panel polls a per-component endpoint on its own interval (banner 5s, supervisors 5s, queues 5s, jobs 3s). No page reload needed; tables re-render in place.
+
+Disable the route entirely:
+
+```php
+// config/horizon-running-jobs.php
+'ui' => [
+    'enabled' => false,
+],
+```
+
+### Embedding panels in your own dashboard
+
+Each panel is an anonymous Blade component:
+
+```blade
+{{-- Full dashboard --}}
+<x-horizon-running-jobs::dashboard />
+
+{{-- Or compose individually --}}
+<x-horizon-running-jobs::diagnose-banner />
+<x-horizon-running-jobs::supervisors-panel />
+<x-horizon-running-jobs::queues-panel />
+<x-horizon-running-jobs::running-jobs-table :poll="3000" :allow-release="true" />
+
+{{-- Filtered to orphans only --}}
+<x-horizon-running-jobs::running-jobs-table :orphaned-only="true" />
+```
+
+Component props:
+
+| Component | Props |
+|---|---|
+| `dashboard` | `:poll` (default 5000), `:jobs-poll` (default 3000) |
+| `diagnose-banner` | `:poll` (default 5000) |
+| `supervisors-panel` | `:poll` (default 5000) |
+| `queues-panel` | `:poll` (default 5000) |
+| `running-jobs-table` | `:poll` (default 3000), `:allow-release` (default true), `:orphaned-only` (default false) |
+
+Pass `:poll="0"` to disable a panel's auto-refresh.
+
+For panels embedded in *your* page (not the standalone dashboard), the host page must also load:
+
+- The package CSS, served at `/horizon/queue-monitor/assets/horizon-running-jobs.css`, or published via `vendor:publish --tag=horizon-running-jobs-css`
+- Alpine.js (Laravel's default for Blade interactivity)
+- A `<meta name="csrf-token" content="{{ csrf_token() }}">` tag if `:allow-release` is enabled — the release POST is CSRF-protected
+
+The factory functions Alpine needs (`hrjPanel`, `hrjReleaseButton`) are inlined in the standalone dashboard. If you're embedding components in your own page and want auto-refresh + release to work, copy the inline `<script>` block from `vendor/ashiqfardus/horizon-running-jobs/resources/views/dashboard.blade.php` into your layout, or include the published JS.
+
+### Theming
+
+The package CSS is fully scoped under `.hrj` — it cannot leak into your styles. All colors are CSS variables — override any of them in your own stylesheet to retheme:
+
+```css
+.hrj {
+    --hrj-color-pass:   #00b8a9;
+    --hrj-color-warn:   #ffae00;
+    --hrj-color-fail:   #ff5b5b;
+    --hrj-color-orphan: #ff7a45;
+    --hrj-color-zombie: #b388ff;
+    --hrj-bg:           #ffffff;
+    --hrj-text:         #1a1a1a;
+    --hrj-border:       #e5e5e5;
+    /* ... see resources/css/horizon-running-jobs.css for the full list */
+}
+```
+
+Dark mode is auto-detected via `prefers-color-scheme`. Force light by adding `class="hrj hrj--light"` on the wrapper.
+
+---
+
+## CLI commands
+
+Every command supports `--json` for scripting and a `-h` help flag.
+
+### `horizon:running-jobs`
+
+List jobs currently in the reserved set.
 
 ```bash
-# List running jobs on current server
+# Default — current server's jobs (or all jobs in non-distributed mode)
 php artisan horizon:running-jobs
 
-# Show jobs from ALL servers
+# All servers across the cluster
 php artisan horizon:running-jobs --all
 
-# Monitor specific queues
-php artisan horizon:running-jobs --queue=emails --queue=notifications
+# Specific queues
+php artisan horizon:running-jobs --queue=emails --queue=reports
 
-# Limit results
+# Limit display
 php artisan horizon:running-jobs --limit=50
 
-# Output as JSON
-php artisan horizon:running-jobs --json
-
-# Show statistics
-php artisan horizon:running-jobs --stats
-
-# Show only orphaned jobs (reserved but worker is gone)
+# Only orphans (worker process is gone)
 php artisan horizon:running-jobs --orphaned
 
-# Live-refresh the table every 3 seconds (Ctrl-C to exit)
+# Live-refresh (Ctrl-C to exit)
 php artisan horizon:running-jobs --watch
+php artisan horizon:running-jobs --watch=5    # custom interval (seconds)
 
-# Custom refresh interval (seconds)
-php artisan horizon:running-jobs --watch=5
+# Aggregate stats
+php artisan horizon:running-jobs --stats
+
+# JSON for scripting
+php artisan horizon:running-jobs --json
 ```
 
-> `--watch` also works on `horizon:queues` and `horizon:supervisors`. Ignored when combined with `--json`.
-
-#### Example Output
+Sample output:
 
 ```
-🔍 Scanning queues: default
+🔍 Scanning queues: default, emails, reports
 📍 Current server: app-server-01
 
-+----------+------------------------+----------+---------------+---------+----------+----------+----------+
-| ID       | Job                    | Queue    | Server        | Status  | Started  | Duration | Attempts |
-+----------+------------------------+----------+---------------+---------+----------+----------+----------+
-| 4b5ecc82 | App\Jobs\ProcessOrder  | default  | app-server-01 | running | 14:30:15 | 2m 34s   | 1        |
-| 8a2b3c4d | App\Jobs\SendEmail     | emails   | app-server-01 | running | 14:31:42 | 45s      | 1        |
-+----------+------------------------+----------+---------------+---------+----------+----------+----------+
-
++----------+--------------------+----------+----------------+----------+----------+----------+----------+
+| ID       | Job                | Queue    | Server         | Status   | Started  | Duration | Attempts |
++----------+--------------------+----------+----------------+----------+----------+----------+----------+
+| 4b5ecc82 | App\Jobs\Process…  | default  | app-server-01  | running  | 14:30:15 | 2m 34s   | 1        |
+| 8a2b3c4d | App\Jobs\StuckJob  | reports  | app-server-01  | ⚠ orphan | 14:31:42 | 12m 08s  | 1        |
++----------+--------------------+----------+----------------+----------+----------+----------+----------+
 ✓ Found 2 running job(s)
+⚠️  1 orphan job(s) detected (worker process is no longer registered)
 ```
 
-### Releasing reserved jobs back to pending
+### `horizon:queues`
 
-When a job is stuck in the reserved set (orphaned worker, zombie reservation, malformed entry that won't process), the `horizon:release` command moves it back to the pending list so the next available worker picks it up.
+Per-queue depth:
 
 ```bash
-# Release a single job by UUID
-php artisan horizon:release abc-123-def-456
-
-# Release every orphaned reservation in any monitored queue
-php artisan horizon:release --orphaned
-
-# Release every zombie (expired-reservation) job in a specific queue
-php artisan horizon:release --zombie --queue=reports
-
-# Preview without modifying Redis
-php artisan horizon:release --orphaned --dry-run
-
-# Skip the confirmation prompt (suitable for cron / scripts)
-php artisan horizon:release --orphaned --force
-```
-
-Behavior:
-
-- Atomic per job: ZREM from `queues:<q>:reserved` and LPUSH to `queues:<q>` happen inside a single Redis transaction, so a partial failure can't lose the job.
-- Released jobs go to the **front** of the pending list (LPUSH) so they're processed promptly.
-- Every release is logged via `Log::info` with `{job_id, queue, reason}` for audit trails.
-- `--orphaned`, `--zombie`, and a positional job ID are mutually exclusive — pick one targeting mode.
-- The interactive confirm shows the full table of jobs that will be released before applying.
-
-### Diagnosing Horizon health
-
-```bash
-# Run a unified health check (supervisors, jobs, queues)
-php artisan horizon:diagnose
-
-# Machine-readable for monitoring scripts
-php artisan horizon:diagnose --json
-```
-
-Each check reports `pass`, `warn`, or `fail`. Exit codes: `0` on pass-or-warn, `1` on fail. The only fail condition is "no live Horizon supervisor" — everything else (orphans, zombies, malformed, deep queues) surfaces as a warning so the command stays usable in CI/cron health checks.
-
-```
-🔍 Horizon Health Diagnosis
-
-  ✓  horizon.supervisors    2 supervisor(s) running
-  ⚠  jobs.orphaned          1 orphan job(s) — see `horizon:running-jobs --orphaned`
-  ✓  jobs.zombies           0 zombie jobs
-  ✓  jobs.malformed         0 malformed entries
-  ✓  queues.depths          highest pending: emails (47), totals: pending=58 reserved=4 delayed=2
-
-Status: WARN
-```
-
-### Inspecting queue depths
-
-```bash
-# Pending / reserved / delayed counts per queue
 php artisan horizon:queues
-
-# Limit to specific queues (repeatable)
 php artisan horizon:queues --queue=emails --queue=reports
-
-# Raw JSON for scripting
 php artisan horizon:queues --json
+php artisan horizon:queues --watch
 ```
-
-#### Queue depth example output
 
 ```
 +---------+---------+----------+---------+-------+
@@ -306,27 +355,23 @@ php artisan horizon:queues --json
 +---------+---------+----------+---------+-------+
 ```
 
-#### What the columns mean
+Columns:
 
-- **`Pending`** — jobs waiting in `queues:<name>` (Redis list). These have not been picked up by a worker yet.
-- **`Reserved`** — jobs in `queues:<name>:reserved` (sorted set). These are currently being processed (or were, if the worker died — see `--orphaned`).
-- **`Delayed`** — jobs in `queues:<name>:delayed` (sorted set). These were dispatched with `delay()` and are scheduled to fire in the future.
-- **`Total`** — sum of the three. Useful for at-a-glance queue health.
+- **Pending** — jobs in `queues:<name>` (Redis list), waiting to be picked up
+- **Reserved** — jobs in `queues:<name>:reserved` (sorted set), currently being processed (or stuck)
+- **Delayed** — jobs in `queues:<name>:delayed` (sorted set), scheduled to fire later
+- **Total** — sum of the three
 
-### Inspecting supervisors and master processes
+### `horizon:supervisors`
+
+Every supervisor and master process Horizon has registered in Redis, across the whole deployment:
 
 ```bash
-# List every Horizon supervisor registered in Redis (across all instances)
 php artisan horizon:supervisors
-
-# Include the master process table
-php artisan horizon:supervisors --masters
-
-# Raw JSON for scripting
+php artisan horizon:supervisors --masters    # include master table
 php artisan horizon:supervisors --json
+php artisan horizon:supervisors --watch
 ```
-
-#### Supervisors example output
 
 ```
 +-----------------------------------+---------+------+------------------------+-------+---------+
@@ -339,46 +384,112 @@ php artisan horizon:supervisors --json
 ⚠ 1 supervisor(s) past their expiry — workers may have died without cleanup.
 ```
 
-#### How `Expires` and `⚠ stale` work
+The `Expires` column counts down between Horizon's heartbeats. A supervisor flagged `⚠ stale` has been silent for longer than the grace window (default 5s, see [config](#configuration-reference)), suggesting the master process or the supervisor itself has died.
 
-Horizon keeps each supervisor and master process registered in a Redis sorted set. Every few seconds the running process refreshes its registration with a new expiry timestamp roughly **90 seconds in the future** (Horizon's default heartbeat window).
+### `horizon:diagnose`
 
-- `Expires: 67s` — registration is healthy; the supervisor is checking in normally.
-- `Expires: OVERDUE 12s` and `⚠ stale` — the registration's expiry has passed in real time but Horizon's master process hasn't reaped the entry yet. With Horizon's default heartbeat, this means the supervisor hasn't pinged for **at least 90 seconds**, which usually indicates the worker process died (OOM, SIGKILL, lost connection).
-
-If you adjust Horizon's heartbeat window in `config/horizon.php`, the threshold for "stale" shifts with it.
-
-### HTTP API
-
-The package automatically registers API routes (configurable):
+Unified health check. Exits 0 on pass-or-warn, exits non-zero on hard failure (e.g. no live supervisor at all). Drop straight into cron:
 
 ```bash
-# List running jobs
-GET /api/horizon/running-jobs
-
-# Show all servers
-GET /api/horizon/running-jobs?all=true
-
-# Specific queues
-GET /api/horizon/running-jobs?queues=emails,reports
-
-# Show only orphaned jobs
-GET /api/horizon/running-jobs?orphaned=true
-
-# Get statistics
-GET /api/horizon/running-jobs/stats
-
-# Inspect supervisors and masters
-GET /api/horizon/supervisors
-
-# Per-queue depth (pending / reserved / delayed / total)
-GET /api/horizon/queues
-
-# Limit to specific queues
-GET /api/horizon/queues?queues=emails,reports
+php artisan horizon:diagnose
+php artisan horizon:diagnose --json
 ```
 
-#### Example Response
+```
+🔍 Horizon Health Diagnosis
+
+  ✓  horizon.supervisors    2 supervisor(s) running
+  ⚠  jobs.orphaned          1 orphan job(s) — see `horizon:running-jobs --orphaned`
+  ✓  jobs.zombies           0 zombie jobs
+  ✓  jobs.malformed         0 malformed entries
+  ✓  queues.depths          highest pending: emails (47), totals: pending=58 reserved=4 delayed=2
+
+Status: WARN
+```
+
+Checks:
+
+| Name | Pass | Warn | Fail |
+|---|---|---|---|
+| `horizon.supervisors` | At least 1 live, none stale | Some stale, OR all stale (Horizon master may have died) | ZSET empty (Horizon never started or all entries reaped) |
+| `jobs.orphaned` | 0 orphans | ≥1 orphan | — |
+| `jobs.zombies` | 0 zombies | ≥1 zombie | — |
+| `jobs.malformed` | 0 dropped | ≥1 dropped (see logs) | — |
+| `queues.depths` | always pass (informational) | — | — |
+
+### `horizon:release`
+
+Move stuck reserved jobs back to the pending list. The only mutating command in the suite. Atomic per-job (ZREM from reserved + LPUSH to pending in one Redis transaction).
+
+```bash
+# Release a single job by UUID
+php artisan horizon:release abc-123-def-456
+
+# Release every orphaned reservation
+php artisan horizon:release --orphaned
+
+# Release every zombie (expired) reservation, scoped to a specific queue
+php artisan horizon:release --zombie --queue=reports
+
+# Preview without modifying Redis
+php artisan horizon:release --orphaned --dry-run
+
+# Skip the confirmation prompt (for cron / scripts)
+php artisan horizon:release --orphaned --force
+```
+
+Behavior:
+
+- Released jobs go to the **front** of the pending list (LPUSH) so a worker picks them up promptly
+- Each release is logged via `Log::info` with the job UUID, queue, and reason — audit trail for ops
+- `--orphaned`, `--zombie`, and a positional UUID are mutually exclusive — pick one targeting mode
+- The interactive confirm shows a full table of jobs that will be released before applying
+- `--queue=` repeats to scope to specific queues
+
+### `--watch` mode
+
+The list-style commands (`horizon:running-jobs`, `horizon:queues`, `horizon:supervisors`) accept a `--watch[=seconds]` flag that re-renders on a loop, like `top`:
+
+```bash
+php artisan horizon:running-jobs --watch       # 3s default
+php artisan horizon:queues --watch=10          # 10s interval
+```
+
+Press `Ctrl-C` to exit. Ignored when combined with `--json`.
+
+### `--json` mode
+
+Every command emits machine-readable JSON with `--json`:
+
+```bash
+php artisan horizon:queues --json | jq '.totals.pending'
+php artisan horizon:diagnose --json | jq '.overall_status'
+```
+
+`horizon:diagnose --json` is particularly useful for monitoring/alerting:
+
+```bash
+if [ "$(php artisan horizon:diagnose --json | jq -r .overall_status)" = "fail" ]; then
+    page-oncall "Horizon is down"
+fi
+```
+
+---
+
+## HTTP API
+
+Auth-gated by the same callback as the dashboard. Throttled to 60 requests/minute per caller by default.
+
+### `GET /api/horizon/running-jobs`
+
+```bash
+GET /api/horizon/running-jobs
+GET /api/horizon/running-jobs?all=true
+GET /api/horizon/running-jobs?queues=emails,reports
+GET /api/horizon/running-jobs?orphaned=true
+```
+
+Sample response:
 
 ```json
 {
@@ -389,6 +500,8 @@ GET /api/horizon/queues?queues=emails,reports
   "running_jobs_count": 2,
   "total_count": 2,
   "dropped_count": 0,
+  "orphan_count": 1,
+  "orphaned_only": false,
   "jobs": [
     {
       "job_id": "4b5ecc82-07a7-40db-97db-bfab5ac5c500",
@@ -396,6 +509,7 @@ GET /api/horizon/queues?queues=emails,reports
       "queue": "default",
       "server": "app-server-01",
       "status": "running",
+      "is_orphaned": false,
       "start_time": "2026-04-25T10:27:26+00:00",
       "start_timestamp": 1745576846,
       "running_for_seconds": 154,
@@ -409,21 +523,65 @@ GET /api/horizon/queues?queues=emails,reports
 }
 ```
 
-#### Response fields
+Response field reference:
 
 | Field | Meaning |
 |---|---|
 | `running_jobs_count` | jobs returned in this payload (may be limited by `max_jobs`) |
 | `total_count` | total reserved-set entries found before truncation |
 | `dropped_count` | malformed reserved-set entries skipped; each is logged via `Log::warning` |
-| `orphan_count` | jobs whose tagged supervisor is no longer in Horizon's live supervisor set |
+| `orphan_count` | jobs whose tagged supervisor is no longer in Horizon's live set |
 | `orphaned_only` | echoes whether `?orphaned=true` was active for this request |
-| `jobs[].status` | `"running"` (reservation valid) or `"zombie"` (reservation expired, still in queue) |
-| `jobs[].is_orphaned` | `true` when the worker that reserved the job is no longer registered in Horizon |
-| `jobs[].start_time` / `start_timestamp` | **actual reservation time** (not the Redis expiry score) |
+| `jobs[].status` | `"running"` (reservation valid) or `"zombie"` (reservation expired) |
+| `jobs[].is_orphaned` | `true` when the worker that reserved the job is no longer registered |
+| `jobs[].start_time` / `start_timestamp` | actual reservation time (not the Redis expiry score) |
 | `warnings[]` | human-readable summary lines — long-running, zombie count, orphan count, dropped count |
 
-#### Example Response — `GET /api/horizon/supervisors`
+### `GET /api/horizon/running-jobs/stats`
+
+Aggregate stats:
+
+```json
+{
+  "success": true,
+  "timestamp": "2026-04-25T10:30:00+00:00",
+  "stats": {
+    "total_running": 5,
+    "by_server": {"app-01": 3, "app-02": 2},
+    "by_queue": {"default": 4, "reports": 1},
+    "by_job_class": {"App\\Jobs\\ProcessOrder": 5},
+    "by_status": {"running": 4, "zombie": 1},
+    "by_orphan_status": {"healthy": 4, "orphaned": 1},
+    "dropped_count": 0,
+    "orphan_count": 1,
+    "longest_running": { /* job object */ },
+    "warnings": []
+  }
+}
+```
+
+### `GET /api/horizon/queues`
+
+```bash
+GET /api/horizon/queues
+GET /api/horizon/queues?queues=emails,reports
+```
+
+```json
+{
+  "success": true,
+  "inspected_at": 1745576846,
+  "queue_count": 3,
+  "totals": {"pending": 16, "reserved": 4, "delayed": 2, "total": 22},
+  "queues": [
+    {"queue": "default", "pending": 12, "reserved": 3, "delayed": 0, "total": 15},
+    {"queue": "emails",  "pending": 4,  "reserved": 1, "delayed": 2, "total": 7},
+    {"queue": "reports", "pending": 0,  "reserved": 0, "delayed": 0, "total": 0}
+  ]
+}
+```
+
+### `GET /api/horizon/supervisors`
 
 ```json
 {
@@ -440,25 +598,9 @@ GET /api/horizon/queues?queues=emails,reports
       "pid": 8298,
       "queues": ["default", "emails", "reports"],
       "process_count": 3,
-      "processes": {
-        "redis:default": 1,
-        "redis:emails": 1,
-        "redis:reports": 1
-      },
+      "processes": {"redis:default": 1, "redis:emails": 1, "redis:reports": 1},
       "expires_at": 1745576906,
       "seconds_until_expiry": 60,
-      "is_stale": false
-    },
-    {
-      "name": "supervisor-02:app-02.example.com",
-      "status": "running",
-      "master": "supervisor-02",
-      "pid": 4521,
-      "queues": ["default", "emails", "reports"],
-      "process_count": 3,
-      "processes": {"redis:default": 1, "redis:emails": 1, "redis:reports": 1},
-      "expires_at": 1745576919,
-      "seconds_until_expiry": 73,
       "is_stale": false
     }
   ],
@@ -477,439 +619,19 @@ GET /api/horizon/queues?queues=emails,reports
 }
 ```
 
-#### Example Response — `GET /api/horizon/queues`
+### Validation
 
-```json
-{
-  "success": true,
-  "inspected_at": 1745576846,
-  "queue_count": 3,
-  "totals": {
-    "pending": 16,
-    "reserved": 4,
-    "delayed": 2,
-    "total": 22
-  },
-  "queues": [
-    {"queue": "default", "pending": 12, "reserved": 3, "delayed": 0, "total": 15},
-    {"queue": "emails",  "pending": 4,  "reserved": 1, "delayed": 2, "total": 7},
-    {"queue": "reports", "pending": 0,  "reserved": 0, "delayed": 0, "total": 0}
-  ]
-}
-```
+Endpoints accepting `?queues=` enforce:
 
-### Using the Facade
-
-```php
-use Ashiqfardus\HorizonRunningJobs\Facades\RunningJobs;
-
-// Get running jobs for current server
-$result = RunningJobs::getRunningJobs();
-
-// Get running jobs from all servers
-$result = RunningJobs::getRunningJobs(null, true);
-
-// Get running jobs for specific queues
-$result = RunningJobs::getRunningJobs(null, false, ['emails', 'reports']);
-
-// Get statistics
-$stats = RunningJobs::getStats();
-```
+- Each name matches `[A-Za-z0-9_:.-]+`
+- At most 20 names per request
+- Invalid input → `422 Unprocessable Entity`
 
 ---
 
-## Configuration
+## Securing access
 
-After publishing the config file, you can customize:
-
-```php
-// config/horizon-running-jobs.php
-
-return [
-    // Default queues to monitor (null = auto-detect from Horizon)
-    'queues' => null,
-
-    // Maximum jobs per query (prevents memory issues)
-    'max_jobs' => 1000,
-
-    // Long-running job threshold in seconds
-    'long_running_threshold' => 300,
-
-    // API response caching
-    'cache' => [
-        'enabled' => true,
-        'ttl' => 10,
-        'prefix' => 'horizon_running_jobs',
-    ],
-
-    // Route configuration
-    'routes' => [
-        'enabled' => true,
-        'prefix' => 'api',
-        'middleware' => ['api'], // Add 'auth:sanctum' for protection
-        'uri' => 'horizon/running-jobs',
-    ],
-
-    // Redis connection (null = auto-detect from config('horizon.use'))
-    'redis_connection' => null,
-
-    // Queue retry_after window in seconds.
-    // Redis stores reserved-set scores as (reservation_time + retry_after).
-    // Leave null to auto-detect from config('queue.connections.<horizon.use>.retry_after'),
-    // falling back to 90. Override only if the heuristic picks the wrong value.
-    'retry_after' => null,
-];
-```
-
-### How `status` and `is_orphaned` are decided
-
-Each job in the response carries a `status` field and an `is_orphaned` boolean — two independent signals:
-
-**`status`** reflects the Redis reservation expiry:
-
-- `"running"` — expiry is still in the future (normal).
-- `"zombie"` — the reservation has expired but the entry is still in `queues:<q>:reserved`. The worker processing the job likely died (OOM, SIGKILL) or Horizon hasn't reaped the entry yet.
-
-**`is_orphaned`** reflects Horizon's live supervisor registry:
-
-- `false` — the supervisor name in the job's `server:` tag appears in Horizon's `supervisors` sorted set.
-- `true` — no live supervisor matches the tag, meaning the worker process is no longer registered. The job is stuck: it won't be reaped by Horizon's supervisor loop, so it will stay reserved until the `retry_after` window expires and lands in the failed queue.
-
-The two states can combine — a job can be both a zombie (expired reservation) and orphaned (dead supervisor). The CLI Status column shows `⚠ orphan+zombie` in that case. Use `--orphaned` / `?orphaned=true` to filter to just the orphaned subset.
-
----
-
-## Dashboard Integration
-
-The package ships a Blade-based dashboard with composable panels and an optional standalone page. No build step. No JS framework imposed on your app. Drops into vanilla Laravel, Livewire, Inertia, or anywhere Blade renders.
-
-### Quick start: the standalone dashboard
-
-By default, visiting `/horizon/queue-monitor` in your app shows the full dashboard:
-
-- Health banner across the top (PASS / WARN / FAIL with the reason)
-- Supervisors table — names, status, expiry, stale flag
-- Queue depths — pending / reserved / delayed per queue + totals
-- Running jobs table — orphan and zombie badges, inline release button on rows that need attention
-
-The route is registered automatically. Auth is gated by the same `Authorize` middleware as the JSON API — by default open in `local`/`testing`, denied in `production` until you register an auth callback (see [Securing the API](#securing-the-api)).
-
-To disable the route entirely:
-
-```php
-// config/horizon-running-jobs.php
-'ui' => [
-    'enabled' => false,
-],
-```
-
-### Embedding individual panels in your own dashboard
-
-Each panel is a composable Blade component. Drop them into your existing admin pages:
-
-```blade
-{{-- Full dashboard, all panels --}}
-<x-horizon-running-jobs::dashboard />
-
-{{-- Or pick the ones you want --}}
-<x-horizon-running-jobs::diagnose-banner />
-<x-horizon-running-jobs::supervisors-panel />
-<x-horizon-running-jobs::queues-panel />
-<x-horizon-running-jobs::running-jobs-table :poll="3000" :allow-release="true" />
-<x-horizon-running-jobs::running-jobs-table :orphaned-only="true" />
-```
-
-Each component accepts a `:poll` prop (refresh interval in milliseconds; pass `0` to disable). The `running-jobs-table` additionally accepts `:allow-release` (show inline release buttons) and `:orphaned-only` (filter to orphan rows).
-
-For panels to auto-refresh in a host page, the page needs:
-
-- The package CSS (served by the package, or copy via `vendor:publish --tag=horizon-running-jobs-css`)
-- Alpine.js (the Laravel default for sprinkles of interactivity)
-- A CSRF meta tag (`<meta name="csrf-token" content="...">`) if the release button is enabled
-
-### Theming
-
-The dashboard ships with a small scoped stylesheet. All colors are CSS variables — override any of them in your own stylesheet to retheme:
-
-```css
-.hrj {
-    --hrj-color-pass: #00b8a9;
-    --hrj-color-warn: #ffae00;
-    --hrj-color-fail: #ff5b5b;
-    --hrj-bg: #fafafa;
-    --hrj-border: #e0e0e0;
-    /* ... */
-}
-```
-
-Dark mode is auto-detected via `prefers-color-scheme`. Force light mode by adding `class="hrj hrj--light"` to the wrapper.
-
-To fork the views entirely:
-
-```bash
-php artisan vendor:publish --tag=horizon-running-jobs-views
-```
-
-Now `resources/views/vendor/horizon-running-jobs/` is yours.
-
-### Legacy v1 widget (deprecated)
-
-### Option 1: Standalone JavaScript Widget
-
-The easiest way to add a running jobs panel to any page:
-
-```bash
-# Publish the assets
-php artisan vendor:publish --tag=horizon-running-jobs-assets
-```
-
-Then add to your HTML:
-
-```html
-<!-- Add the widget container -->
-<div id="running-jobs-widget"></div>
-
-<!-- Include the widget script -->
-<script src="/vendor/horizon-running-jobs/widget.js"></script>
-
-<!-- Initialize -->
-<script>
-    HorizonRunningJobs.init({
-        container: '#running-jobs-widget',
-        apiUrl: '/api/horizon/running-jobs',
-        refreshInterval: 5000,  // Auto-refresh every 5 seconds
-        showAllServers: false
-    });
-</script>
-```
-
-### Option 2: Vue.js Component
-
-For Vue.js applications, copy the component from the published assets:
-
-```javascript
-// In your Vue app
-import RunningJobs from './vendor/horizon-running-jobs/components/RunningJobs.vue';
-
-export default {
-    components: {
-        RunningJobs
-    }
-}
-```
-
-```html
-<template>
-    <running-jobs />
-</template>
-```
-
-### Option 3: Custom Integration via API
-
-Build your own UI by consuming the JSON API:
-
-```javascript
-// Fetch running jobs
-fetch('/api/horizon/running-jobs?all=true')
-    .then(response => response.json())
-    .then(data => {
-        console.log(`${data.running_jobs_count} jobs running`);
-        data.jobs.forEach(job => {
-            console.log(`${job.job_class} on ${job.server} - ${job.running_for_formatted}`);
-        });
-    });
-
-// Fetch statistics
-fetch('/api/horizon/running-jobs/stats')
-    .then(response => response.json())
-    .then(data => {
-        console.log('Stats:', data.stats);
-    });
-```
-
-### Option 4: Blade Component (DIY)
-
-Create a simple Blade component:
-
-```php
-// resources/views/components/running-jobs.blade.php
-@php
-    $runningJobs = app(\Ashiqfardus\HorizonRunningJobs\RunningJobsManager::class)
-        ->getRunningJobs(null, true);
-@endphp
-
-<div class="running-jobs-panel">
-    <h3>Running Jobs ({{ count($runningJobs['jobs']) }})</h3>
-    
-    @forelse($runningJobs['jobs'] as $job)
-        <div class="job-item {{ $job['running_for_seconds'] > 300 ? 'warning' : '' }}">
-            <strong>{{ class_basename($job['job_class']) }}</strong>
-            <span>{{ $job['queue'] }}</span>
-            <span>{{ $job['server'] }}</span>
-            <span>{{ $job['running_for_formatted'] }}</span>
-        </div>
-    @empty
-        <p>No jobs currently running</p>
-    @endforelse
-</div>
-```
-
-### Option 5: Standalone Dashboard Page (Recommended)
-
-Create a dedicated page that matches Horizon's dark theme:
-
-**1. Create a route:**
-
-```php
-// routes/web.php
-Route::get('/running-jobs', function () {
-    return view('running-jobs');
-})->middleware(['web']); // Add your auth middleware
-```
-
-> **Important:** Do NOT use `/horizon/*` path as it conflicts with Horizon's routes.
-
-**2. Create the view:**
-
-```blade
-{{-- resources/views/running-jobs.blade.php --}}
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Running Jobs - Horizon</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #1a1a2e; 
-            color: #fff; 
-            min-height: 100vh;
-        }
-        .nav { 
-            background: #16162a; 
-            padding: 16px 24px; 
-            display: flex; 
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid #2a2a4a;
-        }
-        .nav h1 { font-size: 18px; font-weight: 600; }
-        .nav a { color: #6366f1; text-decoration: none; }
-        .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
-        #running-jobs-widget { margin-top: 20px; }
-    </style>
-</head>
-<body>
-    <nav class="nav">
-        <h1>🔄 Running Jobs</h1>
-        <a href="/horizon">← Back to Horizon</a>
-    </nav>
-    
-    <div class="container">
-        <div id="running-jobs-widget"></div>
-    </div>
-
-    <script src="/vendor/horizon-running-jobs/widget.js"></script>
-    <script>
-        HorizonRunningJobs.init({
-            container: '#running-jobs-widget',
-            apiUrl: '/api/horizon/running-jobs',
-            refreshInterval: 3000,
-            showAllServers: true
-        });
-    </script>
-</body>
-</html>
-```
-
-**3. Access at:** `http://your-app.com/running-jobs`
-
-**4. (Optional) Add a link in Horizon dashboard:**
-
-You can add a custom link to your running jobs page by publishing Horizon's views and modifying them, or simply bookmark the `/running-jobs` URL.
-
-> **Note:** Direct integration into Horizon's compiled Vue dashboard requires forking the Horizon package, which is not recommended as it complicates upgrades.
-
----
-
-## How It Works
-
-### The Problem
-
-Laravel Horizon stores running jobs in Redis sorted sets:
-- Key: `queues:{queue_name}:reserved`
-- Score: Unix timestamp when job was picked up
-- Value: JSON payload with job details
-
-But Horizon doesn't expose this data per-server.
-
-### The Solution
-
-This package queries Redis directly and uses a **hybrid identification system**:
-
-1. **Primary**: Horizon tags (`server:hostname`)
-2. **Fallback**: `supervisor_id` property on the job class
-
-This ensures 100% reliability across different job configurations.
-
-### Distributed Architecture
-
-```
-                    ┌─────────────────┐
-                    │  Redis Server   │
-                    └────────┬────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              │              │              │
-         ┌────▼────┐    ┌────▼────┐   ┌────▼────┐
-         │ Server A│    │ Server B│   │ Server C│
-         │ 5 jobs  │    │ 3 jobs  │   │ 7 jobs  │
-         └─────────┘    └─────────┘   └─────────┘
-```
-
-Each server can see its own jobs or all jobs across the cluster.
-
----
-
-## Alternative: Manual Setup (Without Trait)
-
-If you prefer not to use the trait:
-
-```php
-class YourJob implements ShouldQueue
-{
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
-
-    public string $supervisor_id;
-
-    public function __construct()
-    {
-        $this->supervisor_id = gethostname();
-    }
-
-    public function tags(): array
-    {
-        return [
-            'server:' . gethostname(),
-            'environment:' . app()->environment(),
-            'type:' . class_basename($this),
-        ];
-    }
-
-    public function handle(): void
-    {
-        // Your logic
-    }
-}
-```
-
----
-
-## Securing the API
-
-The API is **safe by default**:
+The package is **safe by default**:
 
 - In `local` and `testing` environments — open. Zero-friction development.
 - Anywhere else — denied with a 403 unless you register an auth callback.
@@ -917,7 +639,7 @@ The API is **safe by default**:
 
 ### Production: register an auth callback
 
-In your `AppServiceProvider::boot()` (or any service provider):
+In your `AppServiceProvider::boot()`:
 
 ```php
 use Ashiqfardus\HorizonRunningJobs\HorizonRunningJobs;
@@ -930,13 +652,13 @@ public function boot(): void
 }
 ```
 
-The closure receives the incoming `Illuminate\Http\Request`. Return `true` to allow, `false` to deny. Works with whatever auth scheme you already have — Sanctum, Passport, sessions, custom.
+The closure receives the incoming `Illuminate\Http\Request`. Return `true` to allow, `false` to deny. Works with whatever auth scheme you have — Sanctum, Passport, sessions, custom.
 
 If you forget to register the callback in production, the 403 response includes a copy-paste example showing exactly how to fix it.
 
 ### Layering with auth middleware (optional)
 
-If you'd rather use a middleware-driven flow alongside the callback, just add it to the route config:
+Add additional middleware to defend in depth:
 
 ```php
 // config/horizon-running-jobs.php
@@ -945,7 +667,7 @@ If you'd rather use a middleware-driven flow alongside the callback, just add it
 ],
 ```
 
-The bundled `Authorize` middleware runs *after* whatever you configure here, so you get defense-in-depth — middleware AND callback must both pass.
+The bundled `Authorize` middleware runs *after* whatever you configure here, so you get both — middleware AND callback must pass.
 
 ### Disable the routes entirely
 
@@ -955,71 +677,195 @@ If you'd rather wire your own controllers / Gate-based authorization:
 'routes' => [
     'enabled' => false,
 ],
+'ui' => [
+    'enabled' => false,
+],
 ```
 
-### Query parameter validation
+---
 
-The `?queues=` parameter is validated:
+## Configuration reference
 
-- Names must match `[A-Za-z0-9_:.-]+`
-- Maximum 20 names per request
-- Invalid input → `422 Unprocessable Entity` with a clear `Invalid queue parameter` error
+Every config key, with default and meaning. From `config/horizon-running-jobs.php`:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `distributed` | `false` | Enable when more than one Laravel instance shares one Redis. Each instance only sees its own jobs unless `--all` / `?all=true` is passed. |
+| `server_identifier` | `null` | How this instance identifies itself in distributed mode. `null` = auto-detect from `gethostname()`. Override for static names, containers, etc. |
+| `queues` | `null` | Default queues to monitor. `null` = auto-detect from `config('horizon.defaults.*.queue')`. Pass `['default', 'emails']` to pin. |
+| `max_jobs` | `1000` | Hard cap on jobs returned in a single query. Prevents memory blowups on very deep reserved sets. |
+| `long_running_threshold` | `300` | Seconds before a job's row is flagged as "long-running" in warnings. |
+| `cache.enabled` | `true` | Cache HTTP API responses for `cache.ttl` seconds. |
+| `cache.ttl` | `10` | Cache duration in seconds. |
+| `cache.prefix` | `'horizon_running_jobs'` | Cache key prefix. |
+| `routes.enabled` | `true` | Whether the JSON API routes are registered. |
+| `routes.prefix` | `'api'` | URL prefix for API routes. |
+| `routes.middleware` | `['api', 'throttle:60,1']` | Middleware stack for API routes. The `Authorize` middleware is appended unconditionally. |
+| `routes.uri` | `'horizon/running-jobs'` | Path segment for the running-jobs endpoint. |
+| `ui.enabled` | `true` | Whether the Blade dashboard route is registered. |
+| `ui.prefix` | `'horizon/queue-monitor'` | URL prefix for the dashboard. |
+| `ui.middleware` | `['web']` | Middleware stack for the dashboard. The `Authorize` middleware is appended unconditionally. `web` is required for sessions + CSRF on the release POST. |
+| `redis_connection` | `null` | Redis connection name. `null` = auto-detect from `config('horizon.use')`. |
+| `retry_after` | `null` | Override Horizon's `retry_after` window for duration math. `null` = auto-detect from `config('queue.connections.<horizon.use>.retry_after')`, falling back to 90. |
+| `supervisor_stale_grace_seconds` | `5` | Grace window before flagging a supervisor stale. Absorbs heartbeat jitter. Lower = more responsive but flappier; higher = stabler but slower outage detection. |
+
+---
+
+## Using the facade
+
+```php
+use Ashiqfardus\HorizonRunningJobs\Facades\RunningJobs;
+
+// Current server only
+$result = RunningJobs::getRunningJobs();
+
+// All servers
+$result = RunningJobs::getRunningJobs(null, true);
+
+// Specific queues
+$result = RunningJobs::getRunningJobs(null, false, ['emails', 'reports']);
+
+// Filter to orphans only
+$result = RunningJobs::getRunningJobs(null, true, null, $orphanedOnly = true);
+
+// Aggregate stats
+$stats = RunningJobs::getStats();
+```
+
+For releasing jobs programmatically:
+
+```php
+use Ashiqfardus\HorizonRunningJobs\JobReleaser;
+
+$releaser = app(JobReleaser::class);
+
+// Find what's releasable (read-only)
+$found = $releaser->findReleasable(['orphaned' => true, 'queues' => ['reports']]);
+
+// Release them (atomic per-job)
+$count = $releaser->release($found);
+```
+
+---
+
+## How it works internally
+
+Laravel's Redis queue stores jobs in three keys per queue:
+
+| Key | Type | Contains |
+|---|---|---|
+| `queues:{q}` | LIST | Pending jobs (workers `LPOP` from here) |
+| `queues:{q}:reserved` | ZSET | Currently-reserved jobs (score = expiry timestamp) |
+| `queues:{q}:delayed` | ZSET | Scheduled / delayed jobs (score = release timestamp) |
+
+This package reads all three. For supervisors / health, it also reads Horizon's own keys on the `horizon` Redis connection:
+
+| Key | Type | Contains |
+|---|---|---|
+| `supervisors` | ZSET | Live supervisor names (score = expiry) |
+| `masters` | ZSET | Live master process names (score = expiry) |
+| `supervisor:{name}` | HASH | Per-supervisor metadata (pid, queues, process counts) |
+| `master:{name}` | HASH | Per-master metadata |
+
+### Identifying which job belongs to which server
+
+Two paths, in order:
+
+1. **Tags** — Horizon stores tags as part of the job payload. The package looks for `server:<name>` and matches against the supervisor name.
+2. **`supervisor_id` property** — fallback if no tag is set. The package extracts via regex (no `unserialize`).
+
+This is why the `TracksServer` trait is a quality-of-life affordance — it adds the tag automatically. If you have your own `tags()` returning `server:gethostname()`, the package picks that up too.
+
+### Distributed mode
+
+```
+                    ┌─────────────────┐
+                    │  Redis Server   │
+                    └────────┬────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              │              │              │
+         ┌────▼────┐    ┌────▼────┐   ┌────▼────┐
+         │ App A   │    │ App B   │   │ App C   │
+         │ 5 jobs  │    │ 3 jobs  │   │ 7 jobs  │
+         └─────────┘    └─────────┘   └─────────┘
+```
+
+Each instance can see its own jobs (default) or all jobs in the cluster (with `--all` / `?all=true`).
+
+### Cache invalidation
+
+API responses cache for `cache.ttl` seconds (default 10) to prevent hammering Redis. Cache keys embed an epoch counter; calling `RunningJobs::clearCache()` increments the epoch, invalidating every previously-cached response without needing wildcard deletes.
+
+---
+
+## Upgrading from v1.0
+
+v2.0 introduces several breaking changes plus a substantial feature set. Before upgrading:
+
+### Breaking changes
+
+1. **Production endpoints now deny by default.** v1.0 left the routes wide open in any environment. v2.0 returns `403` from `local`/`testing`-other environments unless you register an auth callback. The 403 body includes a copy-paste example. See [Securing access](#securing-access).
+
+2. **`RunningJobsManager::parseJobData()` throws `RuntimeException`** on malformed payloads (was: returned `null`). Calling code that relied on the null return needs to wrap in try/catch or call from inside the manager which already handles it.
+
+3. **`response().jobs[*].start_time` / `start_timestamp` reflect the actual reservation time** rather than the Redis expiry score. Charts that built duration math on the v1 values may need adjustment.
+
+4. **Default route middleware adds `throttle:60,1`.** Callers exceeding 60 requests/minute now receive 429.
+
+5. **PHP 8.0 dropped.** Minimum is PHP 8.1.
+
+### Additive (no action needed)
+
+- New CLI commands: `horizon:queues`, `horizon:supervisors`, `horizon:diagnose`, `horizon:release`
+- New HTTP endpoints: `/api/horizon/queues`, `/api/horizon/supervisors`
+- New Blade dashboard at `/horizon/queue-monitor` + composable components
+- New job fields: `is_orphaned`, `status` (`"running"` | `"zombie"`)
+- New response fields: `orphan_count`, `dropped_count`, `orphaned_only`
+- `--watch` flag on list-style commands
+
+### Deprecated (still works, will be removed in v3.0)
+
+- The standalone JS widget (`vendor:publish --tag=horizon-running-jobs-assets`) and the bundled Vue component. Both only show running jobs and lack any of the v2 features. Migrate to the Blade dashboard.
 
 ---
 
 ## Testing
 
-### Unit tests
-
 ```bash
 composer test
 ```
 
-Runs the PHPUnit suite via Testbench. No Redis needed — unit tests cover pure logic (duration formatting, server-identifier extraction).
+Runs the full PHPUnit suite. No Redis required for unit + feature tests; integration tests skip themselves when Redis isn't reachable on `127.0.0.1:6379`.
 
-### End-to-end testing against a real Laravel app
-
-A sibling demo app lives at [`../laravel-horizon-running-jobs-demo`](../laravel-horizon-running-jobs-demo). It's a fresh Laravel 13 install that consumes this package via Composer path symlink — edits in this repo are live in the demo with no reinstall.
+For end-to-end testing against a real Laravel app, the [demo at `../laravel-horizon-running-jobs-demo`](../laravel-horizon-running-jobs-demo) is a fresh Laravel 13 install consuming this package via Composer path symlink.
 
 ```bash
 cd ../laravel-horizon-running-jobs-demo
-php artisan horizon                              # terminal 1
-php artisan demo:dispatch-workload               # terminal 2
-php artisan horizon:running-jobs --stats         # terminal 2
+php artisan horizon                           # terminal 1
+php artisan demo:dispatch-workload            # terminal 2 — varied jobs across queues
+php artisan demo:simulate-orphan --count=2    # terminal 2 — flip to broken state
+php artisan horizon:running-jobs --orphaned   # observe the orphans
+php artisan horizon:release --orphaned        # release them back to pending
 ```
 
-Dummy jobs cover: fast (500ms), medium (5-10s), slow (30-60s), flaky (50% failure), memory-heavy (200MB), and stuck (`sleep(9999)` — for orphan-detection testing).
-
-See the demo's [README](../laravel-horizon-running-jobs-demo/README.md) for scenarios.
-
----
-
-## Changelog
-
-Please see [CHANGELOG](CHANGELOG.md) for more information on what has changed recently.
+The demo also serves the Blade dashboard at `/horizon/queue-monitor`.
 
 ---
 
 ## Contributing
 
-Please see [CONTRIBUTING](CONTRIBUTING.md) for details.
-
----
+PRs welcome. Run `composer test` before submitting. Integration tests require Redis on `127.0.0.1:6379`.
 
 ## Security
 
-If you discover any security-related issues, please email ashiqfardus@hotmail.com instead of using the issue tracker.
-
----
+Found a security issue? Email **ashiqfardus@hotmail.com** instead of using the public issue tracker.
 
 ## Credits
 
 - [Ashiq Fardus](https://github.com/ashiqfardus)
-- [All Contributors](../../contributors)
-
----
+- [All contributors](../../contributors)
 
 ## License
 
-The MIT License (MIT). Please see [License File](LICENSE.md) for more information.
-
+MIT — see [LICENSE.md](LICENSE.md).

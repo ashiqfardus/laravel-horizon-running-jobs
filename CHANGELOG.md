@@ -4,6 +4,8 @@ All notable changes to `horizon-running-jobs` will be documented in this file.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-04-25
+
 ### Added
 
 - `php artisan horizon:supervisors` — inspect every Horizon supervisor and master process registered in Redis across the whole deployment. Surfaces name, status (running / paused / stale), assigned master, pid, queues, worker process count, expiry, and an `is_stale` flag for entries whose registration expired but have not been reaped. `--masters` adds the master table; `--json` emits the raw payload.
@@ -17,6 +19,7 @@ All notable changes to `horizon-running-jobs` will be documented in this file.
 - Composable Blade components for embedding panels into existing dashboards: `<x-horizon-running-jobs::dashboard />`, `<x-horizon-running-jobs::diagnose-banner />`, `<x-horizon-running-jobs::supervisors-panel />`, `<x-horizon-running-jobs::queues-panel />`, `<x-horizon-running-jobs::running-jobs-table />`. Each accepts a `:poll="ms"` prop; pass `0` to disable auto-refresh.
 - Inline `release` button on orphan / zombie rows in the dashboard, posting to a CSRF-gated `POST /horizon/queue-monitor/release` endpoint that delegates to the same `JobReleaser` service the CLI uses.
 - `php artisan vendor:publish --tag=horizon-running-jobs-views` — publish the Blade views for forking / theming. `--tag=horizon-running-jobs-css` publishes the scoped stylesheet for serving from your own public directory.
+- `supervisor_stale_grace_seconds` config option (default `5`) — grace window before flagging a supervisor as stale. Absorbs normal heartbeat jitter so the dashboard doesn't flap between "running" and "stale" with every poll. The same window applies to orphan detection so a job's worker is only flagged "gone" once its supervisor has been silent for longer than the window.
 
 ### Changed
 
