@@ -4,7 +4,7 @@
      * data factories inline (so they're guaranteed in scope before Alpine
      * starts), then loads Alpine itself.
      */
-    $cssUrl = route('horizon-running-jobs.assets', ['file' => 'horizon-running-jobs.css']);
+    $cssUrl = route('horizon-running-jobs.assets', ['file' => 'css']);
 @endphp
 <!DOCTYPE html>
 <html lang="en">

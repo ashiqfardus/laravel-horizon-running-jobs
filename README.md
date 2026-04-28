@@ -260,7 +260,7 @@ Pass `:poll="0"` to disable a panel's auto-refresh.
 
 For panels embedded in *your* page (not the standalone dashboard), the host page must also load:
 
-- The package CSS, served at `/horizon/queue-monitor/assets/horizon-running-jobs.css`, or published via `vendor:publish --tag=horizon-running-jobs-css`
+- The package CSS, served at `/horizon/queue-monitor/assets/css`, or published via `vendor:publish --tag=horizon-running-jobs-css`
 - Alpine.js (Laravel's default for Blade interactivity)
 - A `<meta name="csrf-token" content="{{ csrf_token() }}">` tag if `:allow-release` is enabled — the release POST is CSRF-protected
 

@@ -4,6 +4,12 @@ All notable changes to `horizon-running-jobs` will be documented in this file.
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-04-26
+
+### Fixed
+
+- **Dashboard CSS / JS now load on production nginx servers.** The asset route at `/horizon/queue-monitor/assets/{file}` previously generated URLs ending in `.css` / `.js`, which the typical nginx production block (`location ~* \.(css|js|...)$`) intercepts as static-file requests. The static lookup 404s before Laravel ever sees the request, leaving the dashboard unstyled and Alpine uninitialised. The route now serves at `/horizon/queue-monitor/assets/css` and `/horizon/queue-monitor/assets/js` (no extension), so nginx forwards them to PHP normally. The package's own dashboard view was updated to call the new URL — no consumer-side changes needed unless you hardcoded the old URL anywhere. Localhost setups using `php artisan serve` were unaffected because that server routes everything to Laravel.
+
 ## [2.1.0] - 2026-04-25
 
 ### Added

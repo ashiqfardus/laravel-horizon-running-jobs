@@ -10,14 +10,23 @@ class AssetController extends Controller
     /**
      * Serve the package's CSS / JS straight from its `resources/` dir so
      * users don't have to run `vendor:publish` just to see the dashboard.
-     * The whitelist prevents path traversal.
+     *
+     * Keys are deliberately `css` / `js` (no `.css` / `.js` suffix) so the
+     * generated URLs (`/horizon/queue-monitor/assets/css`) don't match the
+     * `location ~* \.(css|js|...)$` block typical in nginx production
+     * configs. That block would otherwise short-circuit the request to a
+     * static-file lookup that 404s before PHP runs.
+     *
+     * The whitelist also prevents path traversal: only these two keys are
+     * accepted, and the route's `where('file', 'css|js')` enforces it
+     * upstream too.
      */
     private const ASSETS = [
-        'horizon-running-jobs.css' => [
+        'css' => [
             'path' => 'resources/css/horizon-running-jobs.css',
             'mime' => 'text/css',
         ],
-        'horizon-running-jobs.js' => [
+        'js' => [
             'path' => 'resources/js/horizon-running-jobs.js',
             'mime' => 'application/javascript',
         ],

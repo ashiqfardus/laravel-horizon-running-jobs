@@ -40,8 +40,13 @@ class DashboardRouteTest extends TestCase
 
         $body = $response->getContent();
 
-        // CSS is loaded via the package's asset route.
-        $this->assertStringContainsString('horizon-running-jobs.css', $body);
+        // CSS is loaded via the package's asset route. The path deliberately
+        // does NOT end in `.css` — many production nginx configs intercept
+        // any `*.css` URL via a static-file location, which would 404 before
+        // PHP runs. Stripping the extension lets the request fall through
+        // to Laravel.
+        $this->assertStringContainsString('/horizon/queue-monitor/assets/css', $body);
+        $this->assertStringNotContainsString('/horizon/queue-monitor/assets/horizon-running-jobs.css', $body);
 
         // JS factories are inlined into the standalone dashboard page so they
         // resolve under any host setup (Herd HTTPS, custom routing, asset
@@ -85,7 +90,7 @@ class DashboardRouteTest extends TestCase
 
     public function test_asset_route_serves_css_with_correct_mime(): void
     {
-        $response = $this->get('/horizon/queue-monitor/assets/horizon-running-jobs.css');
+        $response = $this->get('/horizon/queue-monitor/assets/css');
 
         $response->assertOk();
         $this->assertStringContainsString('text/css', $response->headers->get('Content-Type'));
@@ -94,11 +99,33 @@ class DashboardRouteTest extends TestCase
 
     public function test_asset_route_serves_js_with_correct_mime(): void
     {
-        $response = $this->get('/horizon/queue-monitor/assets/horizon-running-jobs.js');
+        $response = $this->get('/horizon/queue-monitor/assets/js');
 
         $response->assertOk();
         $this->assertStringContainsString('application/javascript', $response->headers->get('Content-Type'));
         $this->assertStringContainsString('hrjPanel', $response->getContent());
+    }
+
+    public function test_asset_url_does_not_end_in_static_extension(): void
+    {
+        // Regression: nginx production configs commonly include a
+        // `location ~* \.(css|js|...)$` block that intercepts any URL ending
+        // in those extensions for static-file serving. If our asset URLs
+        // ended in .css / .js they'd 404 before reaching PHP.
+        $cssUrl = route('horizon-running-jobs.assets', ['file' => 'css']);
+        $jsUrl  = route('horizon-running-jobs.assets', ['file' => 'js']);
+
+        $this->assertDoesNotMatchRegularExpression('/\.css$/', $cssUrl);
+        $this->assertDoesNotMatchRegularExpression('/\.js$/', $jsUrl);
+    }
+
+    public function test_old_extension_based_asset_urls_404(): void
+    {
+        // The `where('file', 'css|js')` route constraint rejects anything
+        // else, so the old v2.0 / v2.1.0 URL shape is now a 404. This is
+        // intentional — see test_asset_url_does_not_end_in_static_extension.
+        $this->get('/horizon/queue-monitor/assets/horizon-running-jobs.css')->assertStatus(404);
+        $this->get('/horizon/queue-monitor/assets/horizon-running-jobs.js')->assertStatus(404);
     }
 
     public function test_asset_route_rejects_path_traversal(): void
@@ -108,7 +135,7 @@ class DashboardRouteTest extends TestCase
 
     public function test_unknown_asset_returns_404(): void
     {
-        $this->get('/horizon/queue-monitor/assets/whatever.txt')->assertStatus(404);
+        $this->get('/horizon/queue-monitor/assets/whatever')->assertStatus(404);
     }
 
     public function test_release_endpoint_requires_job_id(): void

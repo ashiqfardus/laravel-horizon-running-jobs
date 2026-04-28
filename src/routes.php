@@ -62,8 +62,14 @@ if ($uiConfig['enabled'] ?? true) {
         Route::post('/release', [ReleaseController::class, 'release'])
             ->name('horizon-running-jobs.release');
 
+        // Asset URLs deliberately end in `/css` and `/js` rather than the
+        // file extensions `.css` / `.js`. Many production nginx configs
+        // intercept any URL ending in `.css|.js|...` via a static-file
+        // location block that bypasses PHP — those URLs would 404 before
+        // Laravel ever sees them. Stripping the extension lets the path
+        // fall through to the framework like any other route.
         Route::get('/assets/{file}', [AssetController::class, 'show'])
             ->name('horizon-running-jobs.assets')
-            ->where('file', '[A-Za-z0-9._-]+');
+            ->where('file', 'css|js');
     });
 }
