@@ -845,10 +845,14 @@ composer test
 
 Runs the full PHPUnit suite. No Redis required for unit + feature tests; integration tests skip themselves when Redis isn't reachable on `127.0.0.1:6379`.
 
-For end-to-end testing against a real Laravel app, the [demo at `../laravel-horizon-running-jobs-demo`](../laravel-horizon-running-jobs-demo) is a fresh Laravel 13 install consuming this package via Composer path symlink.
+For end-to-end testing against a real Laravel app, there's a companion demo project at **[github.com/ashiqfardus/laravel-horizon-running-jobs-demo](https://github.com/ashiqfardus/laravel-horizon-running-jobs-demo)** — a fresh Laravel 13 install with Horizon configured and a handful of dummy jobs (fast / medium / slow / flaky / memory-heavy / stuck) already wired up. Clone it as a sibling of this package directory and it'll resolve via Composer's path symlink:
 
 ```bash
-cd ../laravel-horizon-running-jobs-demo
+git clone https://github.com/ashiqfardus/laravel-horizon-running-jobs-demo.git
+cd laravel-horizon-running-jobs-demo
+composer install
+cp .env.example .env && php artisan key:generate
+
 php artisan horizon                           # terminal 1
 php artisan demo:dispatch-workload            # terminal 2 — varied jobs across queues
 php artisan demo:simulate-orphan --count=2    # terminal 2 — flip to broken state
