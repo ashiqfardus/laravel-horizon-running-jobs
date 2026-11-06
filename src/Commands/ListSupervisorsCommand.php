@@ -56,29 +56,25 @@ class ListSupervisorsCommand extends Command
         }
 
         $rows = array_map(function ($s) {
-            $expiry = $s['is_stale']
-                ? 'OVERDUE ' . abs($s['expires_at'] - time()) . 's'
-                : $s['seconds_until_expiry'] . 's';
-
             return [
                 'Name' => $this->shortName((string) $s['name']),
                 'Status' => $this->statusMarker($s['status']),
                 'PID' => $s['pid'] ?? '-',
                 'Queues' => empty($s['queues']) ? '-' : implode(',', $s['queues']),
                 'Procs' => $s['process_count'],
-                'Expires' => $expiry,
+                'Heartbeat' => $s['seconds_since_heartbeat'] . 's ago',
             ];
         }, $supervisors);
 
         $this->table(
-            ['Name', 'Status', 'PID', 'Queues', 'Procs', 'Expires'],
+            ['Name', 'Status', 'PID', 'Queues', 'Procs', 'Heartbeat'],
             $rows
         );
 
         $stale = array_filter($supervisors, fn ($s) => $s['is_stale']);
         if (! empty($stale)) {
             $this->warn(sprintf(
-                '⚠ %d supervisor(s) past their expiry — workers may have died without cleanup.',
+                '⚠ %d supervisor(s) stopped heartbeating — workers may have died without cleanup.',
                 count($stale)
             ));
         }
@@ -95,23 +91,19 @@ class ListSupervisorsCommand extends Command
         }
 
         $rows = array_map(function ($m) {
-            $expiry = $m['is_stale']
-                ? 'OVERDUE ' . abs($m['expires_at'] - time()) . 's'
-                : $m['seconds_until_expiry'] . 's';
-
             return [
                 'Name' => $this->shortName((string) $m['name']),
                 'Status' => $this->statusMarker($m['status']),
                 'PID' => $m['pid'] ?? '-',
                 'Env' => $m['environment'] ?? '-',
                 'Supervisors' => $m['supervisor_count'],
-                'Expires' => $expiry,
+                'Heartbeat' => $m['seconds_since_heartbeat'] . 's ago',
             ];
         }, $masters);
 
         $this->info('Masters:');
         $this->table(
-            ['Name', 'Status', 'PID', 'Env', 'Supervisors', 'Expires'],
+            ['Name', 'Status', 'PID', 'Env', 'Supervisors', 'Heartbeat'],
             $rows
         );
     }

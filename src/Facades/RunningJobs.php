@@ -11,6 +11,7 @@ use Ashiqfardus\HorizonRunningJobs\RunningJobsManager;
  * @method static string extractServerIdentifier(array $jobDetails)
  * @method static string formatDuration(int $seconds)
  * @method static void clearCache()
+ * @method static mixed withoutCache(callable $callback)
  *
  * @see \Ashiqfardus\HorizonRunningJobs\RunningJobsManager
  */

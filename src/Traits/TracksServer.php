@@ -5,32 +5,40 @@ namespace Ashiqfardus\HorizonRunningJobs\Traits;
 /**
  * Add this trait to your Job classes to enable server identification.
  *
- * This trait implements the hybrid approach for tracking which server
- * is processing each job in a distributed Horizon setup.
- *
- * Usage:
+ * The package identifies a job's server through a `server:<identifier>`
+ * Horizon tag. Horizon computes tags when the job is dispatched, so the tag
+ * names the instance that dispatched the job. The trait's tags() adds it:
  *
  * class YourJob implements ShouldQueue
  * {
  *     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
  *     use \Ashiqfardus\HorizonRunningJobs\Traits\TracksServer;
- *
- *     public function __construct()
- *     {
- *         $this->initializeServerTracking();
- *     }
  * }
+ *
+ * A tags() method on the job class replaces the trait's, and the server tag
+ * with it. Merge serverTags() into your own list to keep it:
+ *
+ *     public function tags(): array
+ *     {
+ *         return ['order:' . $this->order->id, ...$this->serverTags()];
+ *     }
+ *
+ * Calling initializeServerTracking() in the constructor is optional. It
+ * stores the identifier on the job as a fallback for jobs that end up
+ * without a server tag.
  */
 trait TracksServer
 {
     /**
-     * The identifier of the server that created/processes this job.
+     * The identifier of the server that created this job. Null unless
+     * initializeServerTracking() was called.
      */
-    public string $supervisor_id;
+    public ?string $supervisor_id = null;
 
     /**
-     * Initialize server tracking.
-     * Call this in your job's constructor.
+     * Store the server identifier on the job itself. Optional: call it in
+     * your job's constructor to give the package a fallback when the job
+     * carries no server tag.
      */
     public function initializeServerTracking(): void
     {
@@ -38,50 +46,40 @@ trait TracksServer
     }
 
     /**
-     * Get the server identifier.
-     * Uses the first supervisor key from Horizon config that matches current environment.
+     * Get the server identifier: the same value the package uses for this
+     * instance (`server_identifier` config, else the first supervisor key of
+     * the Horizon environment, else gethostname()).
      */
     protected function getServerIdentifier(): string
     {
-        // If explicitly configured in package config, use that
-        $configured = config('horizon-running-jobs.server_identifier');
-        if (!empty($configured)) {
-            return $configured;
-        }
+        return app(\Ashiqfardus\HorizonRunningJobs\RunningJobsManager::class)->getServerIdentifier();
+    }
 
-        // Get from Horizon config - check current environment first
-        $currentEnv = app()->environment();
-        $envSupervisors = config("horizon.environments.{$currentEnv}", []);
-
-        if (!empty($envSupervisors)) {
-            // Return the first supervisor key for current environment
-            return array_key_first($envSupervisors);
-        }
-
-        // Fallback to defaults
-        $defaults = config('horizon.defaults', []);
-        if (!empty($defaults)) {
-            return array_key_first($defaults);
-        }
-
-        // Ultimate fallback
-        return gethostname();
+    /**
+     * The tag the package reads this job's server from. Merge
+     * it into your own tags() when the job defines one.
+     *
+     * @return array<int, string>
+     */
+    protected function serverTags(): array
+    {
+        return ['server:' . $this->getServerIdentifier()];
     }
 
     /**
      * Get the tags that should be assigned to the job.
      *
-     * Override this method if you need additional tags.
+     * If the job defines its own tags(), this method is not used: merge
+     * serverTags() into yours.
      *
      * @return array<int, string>
      */
     public function tags(): array
     {
         return [
-            'server:' . $this->getServerIdentifier(),
+            ...$this->serverTags(),
             'environment:' . app()->environment(),
             'type:' . class_basename($this),
         ];
     }
 }
-

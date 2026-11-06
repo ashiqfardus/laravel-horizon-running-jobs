@@ -27,7 +27,8 @@ class HealthDiagnoser
      */
     public function diagnose(): array
     {
-        $stats = $this->manager->getStats();
+        // A diagnosis reads live state, never the API's cached copy.
+        $stats = $this->manager->withoutCache(fn ($manager) => $manager->getStats());
         $checks = [
             $this->checkSupervisors($this->supervisors->inspect()),
             $this->checkOrphanedJobs($stats),

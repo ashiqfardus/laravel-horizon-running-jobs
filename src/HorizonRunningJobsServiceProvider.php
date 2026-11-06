@@ -2,6 +2,10 @@
 
 namespace Ashiqfardus\HorizonRunningJobs;
 
+use Illuminate\Queue\Events\JobFailed;
+use Illuminate\Queue\Events\JobProcessed;
+use Illuminate\Queue\Events\JobProcessing;
+use Illuminate\Queue\Events\JobReleasedAfterException;
 use Illuminate\Support\ServiceProvider;
 
 class HorizonRunningJobsServiceProvider extends ServiceProvider
@@ -30,6 +34,8 @@ class HorizonRunningJobsServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        $this->trackWorkers();
+
         // Publish config
         $this->publishes([
             __DIR__ . '/../config/horizon-running-jobs.php' => config_path('horizon-running-jobs.php'),
@@ -77,5 +83,23 @@ class HorizonRunningJobsServiceProvider extends ServiceProvider
             $this->loadRoutesFrom(__DIR__ . '/routes.php');
         }
     }
-}
 
+    /**
+     * Inside Horizon workers, record which supervisor runs each job, so the
+     * package does not have to rely on tags written at dispatch time.
+     */
+    protected function trackWorkers(): void
+    {
+        $events = $this->app['events'];
+        $manager = fn () => $this->app->make(RunningJobsManager::class);
+
+        $events->listen(JobProcessing::class, fn ($event) => $manager()->recordWorker($event->job));
+
+        $finished = [JobProcessed::class, JobFailed::class];
+        if (class_exists(JobReleasedAfterException::class)) {
+            $finished[] = JobReleasedAfterException::class;
+        }
+
+        $events->listen($finished, fn ($event) => $manager()->forgetWorker($event->job));
+    }
+}

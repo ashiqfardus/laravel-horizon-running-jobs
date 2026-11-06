@@ -72,6 +72,37 @@ class DashboardRouteTest extends TestCase
         }
     }
 
+    public function test_refresh_fragment_keeps_the_panel_controls(): void
+    {
+        // The page swaps in the fragment's contents; if the fragment lacked
+        // the pause control, the first refresh would remove it.
+        $page = $this->get('/horizon/queue-monitor')->assertOk()->getContent();
+        $this->assertMatchesRegularExpression('#panels/running-jobs-table\?[^"\']*poll=3000#', $page);
+        $this->assertMatchesRegularExpression('#panels/supervisors-panel\?[^"\']*poll=5000#', $page);
+
+        $this->get('/horizon/queue-monitor/panels/supervisors-panel?poll=5000')
+            ->assertOk()
+            ->assertSee('togglePause()', false)
+            ->assertSee('x-data="hrjPanel(', false);
+    }
+
+    public function test_refresh_fragment_from_an_older_published_view_still_polls(): void
+    {
+        // Older views build the URL without ?poll=; the component default applies.
+        $this->get('/horizon/queue-monitor/panels/supervisors-panel')
+            ->assertOk()
+            ->assertSee('x-init="start()"', false);
+    }
+
+    public function test_refresh_keeps_the_component_and_skips_open_dialogs(): void
+    {
+        $page = $this->get('/horizon/queue-monitor')->assertOk()->getContent();
+
+        $this->assertStringContainsString('replaceChildren', $page);
+        $this->assertStringNotContainsString('this.$root.replaceWith(fresh)', $page);
+        $this->assertStringContainsString("querySelectorAll('.hrj-modal-overlay')", $page);
+    }
+
     public function test_unknown_panel_returns_404(): void
     {
         $this->get('/horizon/queue-monitor/panels/nope')->assertStatus(404);
@@ -86,6 +117,182 @@ class DashboardRouteTest extends TestCase
         $this->get('/horizon/queue-monitor/panels/running-jobs-table?orphaned_only=1')->assertOk();
 
         $this->assertTrue($spy->capturedOrphanedOnly);
+    }
+
+    public function test_supervisors_panel_shows_last_heartbeat_instead_of_an_expiry(): void
+    {
+        $this->get('/horizon/queue-monitor/panels/supervisors-panel')
+            ->assertOk()
+            ->assertSee('Heartbeat')
+            ->assertSee('3s ago')
+            ->assertDontSee('Expires');
+    }
+
+    public function test_panels_read_live_data_while_the_json_api_stays_cached(): void
+    {
+        // The panels poll every 3-5s. Serving them from the 10s API cache hid
+        // every job shorter than the TTL.
+        config(['cache.default' => 'array']);
+        $manager = new CountingManagerForUI([
+            'cache' => ['enabled' => true, 'ttl' => 60, 'prefix' => 'hrj_ui_test'],
+            'queues' => ['default'],
+        ]);
+        $this->app->instance(RunningJobsManager::class, $manager);
+        $this->app->forgetInstance(HealthDiagnoser::class);
+
+        $this->get('/horizon/queue-monitor/panels/running-jobs-table')->assertOk();
+        $this->get('/horizon/queue-monitor/panels/running-jobs-table')->assertOk();
+        $this->assertSame(2, $manager->fetchCount, 'running-jobs panel must hit Redis on every poll');
+
+        $this->get('/horizon/queue-monitor/panels/diagnose-banner')->assertOk();
+        $this->get('/horizon/queue-monitor/panels/diagnose-banner')->assertOk();
+        $this->assertSame(4, $manager->fetchCount, 'diagnose banner must hit Redis on every poll');
+
+        $this->getJson('/api/horizon/running-jobs')->assertOk();
+        $this->getJson('/api/horizon/running-jobs')->assertOk();
+        $this->assertSame(5, $manager->fetchCount, 'JSON API must still be served from the cache');
+    }
+
+    public function test_first_dashboard_load_reads_live_data(): void
+    {
+        // No controller-level bypass on this route: the views and the
+        // diagnoser have to skip the cache themselves.
+        config(['cache.default' => 'array']);
+        $manager = new CountingManagerForUI([
+            'cache' => ['enabled' => true, 'ttl' => 60, 'prefix' => 'hrj_ui_first_load'],
+            'queues' => ['default'],
+        ]);
+        $this->app->instance(RunningJobsManager::class, $manager);
+        $this->app->forgetInstance(HealthDiagnoser::class);
+
+        // One read for the diagnose banner, one for the running-jobs table.
+        $this->get('/horizon/queue-monitor')->assertOk();
+        $this->assertSame(2, $manager->fetchCount);
+
+        $this->get('/horizon/queue-monitor')->assertOk();
+        $this->assertSame(4, $manager->fetchCount);
+    }
+
+    public function test_diagnose_command_reads_live_data(): void
+    {
+        config(['cache.default' => 'array']);
+        $manager = new CountingManagerForUI([
+            'cache' => ['enabled' => true, 'ttl' => 60, 'prefix' => 'hrj_ui_diagnose'],
+            'queues' => ['default'],
+        ]);
+        $this->app->instance(RunningJobsManager::class, $manager);
+        $this->app->forgetInstance(HealthDiagnoser::class);
+
+        \Illuminate\Support\Facades\Artisan::call('horizon:diagnose');
+        \Illuminate\Support\Facades\Artisan::call('horizon:diagnose');
+
+        $this->assertSame(2, $manager->fetchCount);
+    }
+
+    public function test_panel_refresh_reads_live_data_even_through_an_older_published_view(): void
+    {
+        // A project that published the views before they bypassed the cache
+        // themselves still gets live data on every poll.
+        $this->app['view']->prependNamespace(
+            'horizon-running-jobs',
+            __DIR__ . '/../../Fixtures/published-views'
+        );
+
+        config(['cache.default' => 'array']);
+        $manager = new CountingManagerForUI([
+            'cache' => ['enabled' => true, 'ttl' => 60, 'prefix' => 'hrj_ui_published'],
+            'queues' => ['default'],
+        ]);
+        $this->app->instance(RunningJobsManager::class, $manager);
+
+        $this->get('/horizon/queue-monitor/panels/running-jobs-table')->assertOk()->assertSee('published copy');
+        $this->get('/horizon/queue-monitor/panels/running-jobs-table')->assertOk();
+
+        $this->assertSame(2, $manager->fetchCount);
+    }
+
+    public function test_release_button_is_offered_only_for_jobs_past_their_timeout(): void
+    {
+        $now = time();
+        $this->app->instance(RunningJobsManager::class, new RowsManagerForUI([
+            $this->jobRow('stuck-orphan', orphaned: true, releasable: true, releasableAt: $now - 5),
+            $this->jobRow('draining-orphan', orphaned: true, releasable: false, releasableAt: $now + 95),
+            $this->jobRow('endless-zombie', status: 'zombie', releasable: false, releasableAt: null),
+            $this->jobRow('healthy', releasable: false, releasableAt: $now + 50),
+        ]));
+
+        $html = $this->get('/horizon/queue-monitor/panels/running-jobs-table')->assertOk()->getContent();
+
+        // One per-row button, for the stuck orphan only.
+        $this->assertSame(1, substr_count($html, "jobId: 'stuck-orphan'"));
+        $this->assertStringNotContainsString("jobId: 'draining-orphan'", $html);
+        $this->assertStringNotContainsString("jobId: 'endless-zombie'", $html);
+        $this->assertStringNotContainsString("jobId: 'healthy'", $html);
+
+        // The others say when, or why not.
+        $this->assertMatchesRegularExpression('/in 1m 3[45]s/', $html);
+        $this->assertStringContainsString('no timeout', $html);
+
+        // Bulk button counts the releasable rows only.
+        $this->assertStringContainsString('release 1 stuck', $html);
+        $this->assertStringContainsString('Release 1 stuck job(s)?', $html);
+    }
+
+    public function test_no_bulk_button_when_nothing_is_releasable_yet(): void
+    {
+        $this->app->instance(RunningJobsManager::class, new RowsManagerForUI([
+            $this->jobRow('draining-orphan', orphaned: true, releasable: false, releasableAt: time() + 60),
+        ]));
+
+        $this->get('/horizon/queue-monitor/panels/running-jobs-table')
+            ->assertOk()
+            ->assertSee('1 orphan')
+            ->assertDontSee('stuck job(s)?')
+            ->assertDontSee('hrjBulkRelease', false);
+    }
+
+    public function test_bulk_release_posts_orphans_and_zombies_together(): void
+    {
+        $this->get('/horizon/queue-monitor')
+            ->assertOk()
+            ->assertSee('postRelease(url, { orphaned: true, zombie: true })', false);
+    }
+
+    public function test_supervisor_between_horizons_window_and_stale_is_not_shown_as_healthy(): void
+    {
+        $this->app->instance(SupervisorInspector::class, new class extends SupervisorInspector {
+            public function __construct() {}
+            public function inspect(): array
+            {
+                $row = fn (string $name, string $status, bool $stale, int $age) => [
+                    'name' => $name, 'status' => $status, 'master' => null, 'pid' => null, 'queues' => [],
+                    'process_count' => 0, 'processes' => [], 'last_heartbeat_at' => time() - $age,
+                    'seconds_since_heartbeat' => $age, 'expires_at' => time() - $age + 29,
+                    'seconds_until_expiry' => max(0, 29 - $age), 'is_stale' => $stale,
+                ];
+
+                return ['supervisors' => [
+                    $row('quiet', 'unknown', false, 31),
+                    $row('dead', 'stale', true, 47),
+                ], 'masters' => [], 'inspected_at' => time()];
+            }
+        });
+
+        $html = $this->get('/horizon/queue-monitor/panels/supervisors-panel')->assertOk()->getContent();
+
+        $this->assertStringContainsString('hrj-badge--warn">unknown', $html);
+        $this->assertStringContainsString('hrj-badge--fail">stale', $html);
+        $this->assertStringContainsString('hrj-badge--fail">47s ago', $html);
+    }
+
+    private function jobRow(string $id, bool $orphaned = false, string $status = 'running', bool $releasable = false, ?int $releasableAt = null): array
+    {
+        return [
+            'job_id' => $id, 'job_class' => 'App\\Jobs\\Report', 'queue' => 'default', 'server' => 'web-01',
+            'supervisor' => null, 'status' => $status, 'is_orphaned' => $orphaned, 'is_releasable' => $releasable,
+            'releasable_at' => $releasableAt, 'start_time' => date('c'), 'start_timestamp' => time(),
+            'running_for_seconds' => 5, 'running_for_formatted' => '5s', 'attempts' => 1, 'timeout' => 60, 'tags' => [],
+        ];
     }
 
     public function test_asset_route_serves_css_with_correct_mime(): void
@@ -168,7 +375,72 @@ class DashboardRouteTest extends TestCase
         ])
             ->assertStatus(422)
             ->assertJsonPath('success', false)
-            ->assertJsonPath('message', 'job_id, orphaned, and zombie are mutually exclusive — pick one.');
+            ->assertJsonPath('message', 'job_id cannot be combined with orphaned or zombie.');
+    }
+
+    public function test_release_endpoint_combines_orphaned_and_zombie(): void
+    {
+        $fakeReleaser = new class extends \Ashiqfardus\HorizonRunningJobs\JobReleaser {
+            public ?array $capturedCriteria = null;
+            public function __construct() {}
+            public function findReleasable(array $criteria): array
+            {
+                $this->capturedCriteria = $criteria;
+                return [];
+            }
+            public function release(array $items): int { return 0; }
+        };
+        $this->app->instance(\Ashiqfardus\HorizonRunningJobs\JobReleaser::class, $fakeReleaser);
+
+        $this->postJson('/horizon/queue-monitor/release', ['orphaned' => true, 'zombie' => true])
+            ->assertOk()
+            ->assertJsonPath('mode', 'orphaned+zombie');
+
+        $this->assertSame(['orphaned' => true, 'zombie' => true], $fakeReleaser->capturedCriteria);
+    }
+
+    public function test_release_endpoint_refuses_a_job_a_worker_may_still_be_running(): void
+    {
+        // The page offered the button, but by the time it is clicked the job
+        // is no longer orphaned/expired past its timeout (e.g. picked up again).
+        $fakeReleaser = new class extends \Ashiqfardus\HorizonRunningJobs\JobReleaser {
+            public function __construct() {}
+            public function findReleasable(array $criteria): array
+            {
+                return [['job_id' => $criteria['job_id'], 'queue' => 'default', 'reason' => 'manual', 'payload' => 'p', 'safe' => false]];
+            }
+            public function release(array $items): int
+            {
+                throw new \LogicException('release must not run');
+            }
+        };
+        $this->app->instance(\Ashiqfardus\HorizonRunningJobs\JobReleaser::class, $fakeReleaser);
+
+        $this->postJson('/horizon/queue-monitor/release', ['job_id' => 'busy-job'])
+            ->assertStatus(409)
+            ->assertJsonPath('success', false);
+    }
+
+    public function test_release_endpoint_answers_503_when_the_supervisor_lookup_fails(): void
+    {
+        $this->app->instance(\Ashiqfardus\HorizonRunningJobs\JobReleaser::class, new class extends \Ashiqfardus\HorizonRunningJobs\JobReleaser {
+            public bool $releaseInvoked = false;
+            public function __construct() {}
+            public function findReleasable(array $criteria): array
+            {
+                throw new \Ashiqfardus\HorizonRunningJobs\Exceptions\LiveSupervisorsUnavailable;
+            }
+            public function release(array $items): int
+            {
+                throw new \LogicException('release must not run');
+            }
+        });
+
+        $response = $this->postJson('/horizon/queue-monitor/release', ['orphaned' => true])
+            ->assertStatus(503)
+            ->assertJsonPath('success', false);
+
+        $this->assertStringContainsString('Nothing was released', $response->json('message'));
     }
 
     public function test_release_endpoint_bulk_orphaned_invokes_releaser_with_correct_criteria(): void
@@ -245,7 +517,7 @@ class DashboardRouteTest extends TestCase
             public function findReleasable(array $criteria): array
             {
                 $this->capturedJobId = $criteria['job_id'] ?? null;
-                return [['job_id' => $criteria['job_id'], 'queue' => 'default', 'reason' => 'manual', 'payload' => 'p']];
+                return [['job_id' => $criteria['job_id'], 'queue' => 'default', 'reason' => 'manual', 'payload' => 'p', 'safe' => true]];
             }
 
             public function release(array $items): int
@@ -294,7 +566,7 @@ class StubSupervisorInspectorForUI extends SupervisorInspector
     {
         return [
             'supervisors' => [
-                ['name' => 'sup-1', 'status' => 'running', 'master' => 'm1', 'pid' => 1, 'queues' => ['default'], 'process_count' => 1, 'processes' => [], 'expires_at' => time() + 60, 'seconds_until_expiry' => 60, 'is_stale' => false],
+                ['name' => 'sup-1', 'status' => 'running', 'master' => 'm1', 'pid' => 1, 'queues' => ['default'], 'process_count' => 1, 'processes' => [], 'last_heartbeat_at' => time() - 3, 'seconds_since_heartbeat' => 3, 'expires_at' => time() + 26, 'seconds_until_expiry' => 26, 'is_stale' => false],
             ],
             'masters' => [],
             'inspected_at' => time(),
@@ -343,5 +615,38 @@ class SpyManagerForUI extends StubManagerForUI
     {
         $this->capturedOrphanedOnly = $orphanedOnly;
         return parent::getRunningJobs($serverId, $showAll, $queues, $orphanedOnly);
+    }
+}
+
+class CountingManagerForUI extends RunningJobsManager
+{
+    public int $fetchCount = 0;
+
+    protected function fetchRunningJobs(string $hostname, bool $showAll, array $queues, bool $orphanedOnly = false): array
+    {
+        $this->fetchCount++;
+
+        return ['jobs' => [], 'warnings' => [], 'total_count' => 0, 'dropped_count' => 0, 'orphan_count' => 0];
+    }
+}
+
+class RowsManagerForUI extends StubManagerForUI
+{
+    public function __construct(private array $rows)
+    {
+        parent::__construct();
+    }
+
+    public function getRunningJobs(?string $serverId = null, bool $showAll = false, ?array $queues = null, bool $orphanedOnly = false): array
+    {
+        $orphans = array_filter($this->rows, fn ($j) => $j['is_orphaned']);
+
+        return [
+            'jobs' => $this->rows,
+            'warnings' => [],
+            'total_count' => count($this->rows),
+            'dropped_count' => 0,
+            'orphan_count' => count($orphans),
+        ];
     }
 }

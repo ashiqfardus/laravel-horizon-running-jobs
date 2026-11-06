@@ -21,7 +21,19 @@ class RunningJobsController extends Controller
     public function index(): JsonResponse
     {
         try {
-            $hostname = request()->query('hostname') ?: $this->manager->getServerIdentifier();
+            // ?hostname= is the older name of ?server_identifier= and still works.
+            $requested = collect([request()->query('server_identifier'), request()->query('hostname')])
+                ->first(fn ($value) => is_string($value) && $value !== '');
+            $hostname = $requested ?? $this->manager->getServerIdentifier();
+
+            // The value ends up in a cache key; hold it to the same
+            // allowlist as queue names.
+            if ($requested !== null && ! preg_match('/^[A-Za-z0-9_:.\-]{1,100}$/', $hostname)) {
+                return $this->validationError(
+                    'Invalid server identifier. Allowed: up to 100 characters of alphanumeric, underscore, colon, dot, dash.',
+                    'Invalid server_identifier parameter'
+                );
+            }
             $showAll = filter_var(request()->query('all', false), FILTER_VALIDATE_BOOLEAN);
             $orphanedOnly = filter_var(request()->query('orphaned', false), FILTER_VALIDATE_BOOLEAN);
 
@@ -34,6 +46,10 @@ class RunningJobsController extends Controller
 
             return response()->json([
                 'success' => true,
+                'server_identifier' => $hostname,
+                // Deprecated alias of server_identifier, kept for existing
+                // clients: the value is the supervisor key, not the machine's
+                // host name.
                 'hostname' => $hostname,
                 'timestamp' => now()->toIso8601String(),
                 'queues_monitored' => $queues,
@@ -117,11 +133,11 @@ class RunningJobsController extends Controller
         return $names;
     }
 
-    protected function validationError(string $message): JsonResponse
+    protected function validationError(string $message, string $error = 'Invalid queue parameter'): JsonResponse
     {
         return response()->json([
             'success' => false,
-            'error' => 'Invalid queue parameter',
+            'error' => $error,
             'message' => $message,
         ], 422);
     }

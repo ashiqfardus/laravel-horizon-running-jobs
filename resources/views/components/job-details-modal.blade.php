@@ -32,6 +32,10 @@
                         <span class="hrj-job-summary__label">Server</span>
                         <span class="hrj-job-summary__value" x-text="job.server"></span>
                     </div>
+                    <div class="hrj-job-summary__row" x-show="job.supervisor">
+                        <span class="hrj-job-summary__label">Supervisor</span>
+                        <span class="hrj-job-summary__value" x-text="job.supervisor"></span>
+                    </div>
                     <div class="hrj-job-summary__row">
                         <span class="hrj-job-summary__label">Status</span>
                         <span class="hrj-job-summary__value">

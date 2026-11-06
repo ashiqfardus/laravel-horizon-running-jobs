@@ -2,6 +2,7 @@
 
 namespace Ashiqfardus\HorizonRunningJobs\Commands;
 
+use Ashiqfardus\HorizonRunningJobs\Exceptions\LiveSupervisorsUnavailable;
 use Ashiqfardus\HorizonRunningJobs\JobReleaser;
 use Illuminate\Console\Command;
 
@@ -9,8 +10,8 @@ class ReleaseCommand extends Command
 {
     protected $signature = 'horizon:release
                             {job_id? : UUID of a single reserved job to release}
-                            {--orphaned : Release every orphaned reserved job}
-                            {--zombie : Release every zombie reserved job (expired reservation)}
+                            {--orphaned : Release every orphaned job that has run past its timeout}
+                            {--zombie : Release every zombie job (expired reservation) that has run past its timeout}
                             {--queue=* : Restrict to specific queue(s); repeatable}
                             {--dry-run : Print what would be released without modifying Redis}
                             {--force : Skip the interactive confirmation prompt}';
@@ -24,7 +25,12 @@ class ReleaseCommand extends Command
             return $criteria; // returned an exit code (validation error)
         }
 
-        $found = $releaser->findReleasable($criteria);
+        try {
+            $found = $releaser->findReleasable($criteria);
+        } catch (LiveSupervisorsUnavailable $e) {
+            $this->error($e->getMessage());
+            return self::FAILURE;
+        }
 
         if (empty($found)) {
             if (isset($criteria['job_id'])) {
@@ -37,6 +43,13 @@ class ReleaseCommand extends Command
         }
 
         $this->renderTable($found);
+
+        if (isset($criteria['job_id']) && ! ($found[0]['safe'] ?? false)) {
+            $this->warn(
+                '⚠ This job is not orphaned or expired and past its timeout. A worker may still be running it; '
+                . 'releasing it now can make it run twice.'
+            );
+        }
 
         if ($this->option('dry-run')) {
             $this->info(sprintf('Would release %d job(s). Re-run without --dry-run to apply.', count($found)));
@@ -65,9 +78,7 @@ class ReleaseCommand extends Command
         $orphaned = (bool) $this->option('orphaned');
         $zombie = (bool) $this->option('zombie');
 
-        $targetingCount = (int) ((bool) $jobId) + (int) $orphaned + (int) $zombie;
-
-        if ($targetingCount === 0) {
+        if (! $jobId && ! $orphaned && ! $zombie) {
             $this->error(
                 'Specify a job ID, --orphaned, or --zombie to indicate what to release. '
                 . 'Use --dry-run first to preview.'
@@ -75,19 +86,14 @@ class ReleaseCommand extends Command
             return self::FAILURE;
         }
 
-        if ($targetingCount > 1) {
-            $this->error('--orphaned, --zombie, and a job ID are mutually exclusive — pick one.');
+        if ($jobId && ($orphaned || $zombie)) {
+            $this->error('A job ID cannot be combined with --orphaned or --zombie.');
             return self::FAILURE;
         }
 
-        $criteria = [];
-        if ($jobId) {
-            $criteria['job_id'] = $jobId;
-        } elseif ($orphaned) {
-            $criteria['orphaned'] = true;
-        } elseif ($zombie) {
-            $criteria['zombie'] = true;
-        }
+        $criteria = $jobId
+            ? ['job_id' => $jobId]
+            : array_filter(['orphaned' => $orphaned, 'zombie' => $zombie]);
 
         $queues = $this->option('queue');
         if (! empty($queues)) {

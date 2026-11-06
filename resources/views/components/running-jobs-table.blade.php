@@ -7,18 +7,22 @@
     $orphanedOnly ??= false;
 
     $manager = app(\Ashiqfardus\HorizonRunningJobs\RunningJobsManager::class);
-    $result = $manager->getRunningJobs(null, true, null, $orphanedOnly);
+    // Live read: this panel polls faster than the API cache TTL.
+    $result = $manager->withoutCache(fn ($m) => $m->getRunningJobs(null, true, null, $orphanedOnly));
     $jobs = $result['jobs'];
 
     $panelUrl = route('horizon-running-jobs.panel', [
         'panel' => 'running-jobs-table',
         'orphaned_only' => $orphanedOnly ? '1' : '0',
         'allow_release' => $allowRelease ? '1' : '0',
+        'poll' => (int) $poll,
     ]);
     $releaseUrl = route('horizon-running-jobs.release');
 
     $orphanCount = (int) ($result['orphan_count'] ?? 0);
-    $hasZombie = collect($jobs)->contains(fn ($j) => ($j['status'] ?? '') === 'zombie');
+    // Only orphaned / expired jobs past their timeout are offered for release.
+    $releasableCount = collect($jobs)->filter(fn ($j) => ($j['is_releasable'] ?? false) === true)->count();
+    $now = time();
 @endphp
 
 <div
@@ -37,31 +41,32 @@
                     {{ count($jobs) }} of {{ $result['total_count'] }}{{ $orphanCount > 0 ? ' • ' . $orphanCount . ' orphan' : '' }}
                 </span>
 
-                @if($allowRelease && ($orphanCount > 0 || $hasZombie))
+                @if($allowRelease && $releasableCount > 0)
                     <div x-data="hrjBulkRelease({ url: '{{ $releaseUrl }}' })" style="display: contents;">
                         <button type="button" class="hrj-btn hrj-btn--release" @click="open = true">
-                            release all{{ $orphanCount > 0 ? ' orphans' : ' zombies' }}
+                            release {{ $releasableCount }} stuck
                         </button>
 
                         <div x-show="open" x-cloak class="hrj-modal-overlay"
                             @click.self="if (!busy) open = false"
                             @keydown.escape.window="if (!busy) open = false">
-                            <div class="hrj-modal" role="dialog" aria-modal="true">
-                                <h3>Release every orphan and zombie?</h3>
+                            <div class="hrj-modal" role="dialog" aria-modal="true" aria-labelledby="hrj-bulk-release-title">
+                                <h3 id="hrj-bulk-release-title">Release {{ $releasableCount }} stuck job(s)?</h3>
                                 <p>
-                                    Every reserved job whose worker is gone (orphan) or whose
-                                    reservation has expired (zombie) will be moved back to the
-                                    front of its pending list. A healthy worker will pick them up
-                                    on its next loop.
+                                    Each of these jobs is orphaned (its supervisor is gone) or expired,
+                                    and has run past its timeout, by which point its worker stops it.
+                                    They will be moved back to the front of their pending lists and a
+                                    healthy worker will pick them up on its next loop.
                                 </p>
                                 <p class="hrj-muted">
-                                    This is the bulk equivalent of <code>php artisan horizon:release --orphaned --force</code>
-                                    plus <code>--zombie</code>. Each release is logged.
+                                    Orphans and expired jobs still inside their timeout are left alone.
+                                    This is the same as <code>php artisan horizon:release --orphaned --zombie --force</code>.
+                                    Each release is logged.
                                 </p>
                                 <div class="hrj-modal__actions">
                                     <button type="button" class="hrj-btn" @click="open = false" :disabled="busy">Cancel</button>
                                     <button type="button" class="hrj-btn hrj-btn--primary"
-                                        @click="target = 'orphaned'; submit()"
+                                        @click="submit()"
                                         :disabled="busy">
                                         <span x-show="!busy">Release all</span>
                                         <span x-show="busy" x-cloak>releasing…</span>
@@ -113,7 +118,9 @@
                                     default => ['pass', 'running'],
                                 };
 
-                                $canRelease = $allowRelease && ($isOrphan || $status === 'zombie');
+                                $needsAttention = $isOrphan || $status === 'zombie';
+                                $canRelease = $allowRelease && ($job['is_releasable'] ?? false) === true;
+                                $releasableAt = $job['releasable_at'] ?? null;
                                 $jobJson = htmlspecialchars(json_encode($job, JSON_THROW_ON_ERROR), ENT_QUOTES, 'UTF-8');
                             @endphp
                             <tr style="cursor: pointer;" @click="$dispatch('hrj:show-job', @js($job))">
@@ -142,9 +149,12 @@
                                                 <div x-show="open" x-cloak class="hrj-modal-overlay"
                                                     @click.self="cancel()"
                                                     @keydown.escape.window="cancel()">
-                                                    <div class="hrj-modal" role="dialog" aria-modal="true">
-                                                        <h3>Release this reserved job?</h3>
-                                                        <p>The job will be moved back to the front of its pending list so a healthy worker picks it up.</p>
+                                                    <div class="hrj-modal" role="dialog" aria-modal="true" aria-labelledby="hrj-release-title-{{ $rowKey }}">
+                                                        <h3 id="hrj-release-title-{{ $rowKey }}">Release this reserved job?</h3>
+                                                        <p>
+                                                            Its supervisor is gone or its reservation expired, and it has run past its timeout, by which point its worker stops it.
+                                                            It will be moved back to the front of its pending list so a healthy worker picks it up.
+                                                        </p>
                                                         <div class="hrj-job-summary">
                                                             <div class="hrj-job-summary__row">
                                                                 <span class="hrj-job-summary__label">Job</span>
@@ -173,6 +183,10 @@
                                                     </div>
                                                 </div>
                                             </div>
+                                        @elseif($needsAttention && $releasableAt === null)
+                                            <span class="hrj-muted" title="This job has no timeout, so its worker may still be running it. If you are sure it is stuck: php artisan horizon:release {{ $rowKey }}">no timeout</span>
+                                        @elseif($needsAttention)
+                                            <span class="hrj-muted" title="A worker may still be finishing this job. Release becomes available once it has run past its timeout.">in {{ $manager->formatDuration(max(1, $releasableAt - $now)) }}</span>
                                         @endif
                                     </td>
                                 @endif

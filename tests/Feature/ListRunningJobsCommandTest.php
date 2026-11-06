@@ -54,15 +54,33 @@ class ListRunningJobsCommandTest extends TestCase
         $this->assertStringContainsString('Dropped (malformed): 4', $output);
     }
 
-    public function test_command_warns_when_horizon_is_not_running(): void
+    public function test_command_still_lists_jobs_when_horizon_is_not_running(): void
     {
-        $this->bindManager(new SpyManager(horizonRunning: false));
+        // After a crash nothing runs Horizon, and that is when the orphans
+        // need listing.
+        $this->bindManager(new SpyManager(horizonRunning: false, jobs: [
+            $this->job('uuid-orphan', 'App\\Jobs\\Stuck', 'reports', 'web-01', 'running', 30),
+        ]));
 
         $exit = Artisan::call('horizon:running-jobs');
         $output = Artisan::output();
 
-        $this->assertSame(1, $exit);
-        $this->assertStringContainsString('Horizon is not running', $output);
+        $this->assertSame(0, $exit);
+        $this->assertStringContainsString('Horizon is not running (no master is registered in Redis)', $output);
+        $this->assertStringContainsString('uuid-orp', $output);
+    }
+
+    public function test_json_output_stays_parseable_when_horizon_is_not_running(): void
+    {
+        $this->bindManager(new SpyManager(horizonRunning: false, jobs: [
+            $this->job('uuid-orphan', 'App\\Jobs\\Stuck', 'reports', 'web-01', 'running', 30),
+        ]));
+
+        Artisan::call('horizon:running-jobs', ['--json' => true]);
+
+        $decoded = json_decode(Artisan::output(), true);
+        $this->assertIsArray($decoded);
+        $this->assertSame('uuid-orphan', $decoded['jobs'][0]['job_id']);
     }
 
     public function test_json_truncation_metadata_when_not_truncated(): void
@@ -232,6 +250,21 @@ class ListRunningJobsCommandTest extends TestCase
         $this->assertSame(1, $spy->getRunningJobsCallCount);
     }
 
+    public function test_command_reads_live_data_instead_of_the_api_cache(): void
+    {
+        config(['cache.default' => 'array']);
+        $manager = new CountingCliManager([
+            'cache' => ['enabled' => true, 'ttl' => 60, 'prefix' => 'hrj_cli_test'],
+            'queues' => ['default'],
+        ]);
+        $this->app->instance(RunningJobsManager::class, $manager);
+
+        Artisan::call('horizon:running-jobs');
+        Artisan::call('horizon:running-jobs');
+
+        $this->assertSame(2, $manager->fetchCount);
+    }
+
     private function bindManager(SpyManager $manager): void
     {
         $this->app->instance(RunningJobsManager::class, $manager);
@@ -304,5 +337,19 @@ class SpyManager extends RunningJobsManager
             'longest_running' => null,
             'warnings' => [],
         ];
+    }
+}
+
+class CountingCliManager extends RunningJobsManager
+{
+    public int $fetchCount = 0;
+
+    public function isHorizonRunning(): bool { return true; }
+
+    protected function fetchRunningJobs(string $hostname, bool $showAll, array $queues, bool $orphanedOnly = false): array
+    {
+        $this->fetchCount++;
+
+        return ['jobs' => [], 'warnings' => [], 'total_count' => 0, 'dropped_count' => 0, 'orphan_count' => 0];
     }
 }

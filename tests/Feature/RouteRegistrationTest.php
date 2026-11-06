@@ -21,6 +21,7 @@ class RouteRegistrationTest extends TestCase
         ];
     }
 
+    /** @dataProvider expectedRouteNames */
     #[DataProvider('expectedRouteNames')]
     public function test_named_route_is_registered(string $name): void
     {
@@ -29,6 +30,7 @@ class RouteRegistrationTest extends TestCase
         $this->assertNotNull($route, "Expected named route '{$name}' to be registered.");
     }
 
+    /** @dataProvider expectedRouteNames */
     #[DataProvider('expectedRouteNames')]
     public function test_named_route_has_authorize_middleware(string $name): void
     {
@@ -42,6 +44,7 @@ class RouteRegistrationTest extends TestCase
         );
     }
 
+    /** @dataProvider expectedRouteNames */
     #[DataProvider('expectedRouteNames')]
     public function test_named_route_has_throttle_middleware(string $name): void
     {

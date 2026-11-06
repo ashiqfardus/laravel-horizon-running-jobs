@@ -61,6 +61,57 @@ class RunningJobsControllerTest extends TestCase
         $this->assertSame('explicit-server', $spy->capturedServerId);
     }
 
+    public function test_controller_respects_server_identifier_query_param(): void
+    {
+        $spy = new SpyRunningJobsManager(['distributed' => true, 'cache' => ['enabled' => false]]);
+        $spy->fakeServerId = 'fake-supervisor-01';
+        $this->app->instance(RunningJobsManager::class, $spy);
+
+        // Takes precedence over the older ?hostname= name.
+        $this->getJson('/api/horizon/running-jobs?server_identifier=web-02&hostname=web-01')
+            ->assertOk()
+            ->assertJsonPath('server_identifier', 'web-02');
+
+        $this->assertSame('web-02', $spy->capturedServerId);
+    }
+
+    public function test_invalid_server_identifier_returns_422(): void
+    {
+        $spy = new SpyRunningJobsManager(['distributed' => true, 'cache' => ['enabled' => false]]);
+        $this->app->instance(RunningJobsManager::class, $spy);
+
+        $this->getJson('/api/horizon/running-jobs?server_identifier=' . urlencode('web 01;x'))
+            ->assertStatus(422)
+            ->assertJsonPath('error', 'Invalid server_identifier parameter');
+
+        $this->getJson('/api/horizon/running-jobs?hostname=' . str_repeat('a', 101))->assertStatus(422);
+
+        $this->assertNull($spy->capturedServerId, 'the manager must not be reached with an invalid identifier');
+    }
+
+    public function test_array_valued_identifier_params_fall_back_to_auto_detect(): void
+    {
+        $spy = new SpyRunningJobsManager(['distributed' => true, 'cache' => ['enabled' => false]]);
+        $spy->fakeServerId = 'fake-supervisor-01';
+        $this->app->instance(RunningJobsManager::class, $spy);
+
+        $this->getJson('/api/horizon/running-jobs?server_identifier[]=a&hostname[]=b')->assertOk();
+
+        $this->assertSame('fake-supervisor-01', $spy->capturedServerId);
+    }
+
+    public function test_unusable_server_identifier_does_not_discard_a_valid_hostname(): void
+    {
+        $spy = new SpyRunningJobsManager(['distributed' => true, 'cache' => ['enabled' => false]]);
+        $this->app->instance(RunningJobsManager::class, $spy);
+
+        $this->getJson('/api/horizon/running-jobs?server_identifier[]=a&hostname=web-01')->assertOk();
+        $this->assertSame('web-01', $spy->capturedServerId);
+
+        $this->getJson('/api/horizon/running-jobs?server_identifier=&hostname=web-02')->assertOk();
+        $this->assertSame('web-02', $spy->capturedServerId);
+    }
+
     public function test_invalid_queue_name_returns_422(): void
     {
         $this->getJson('/api/horizon/running-jobs?queues=hello,bad name')
@@ -138,6 +189,7 @@ class RunningJobsControllerTest extends TestCase
             ->assertOk()
             ->assertJsonStructure([
                 'success',
+                'server_identifier',
                 'hostname',
                 'timestamp',
                 'queues_monitored',
@@ -148,6 +200,8 @@ class RunningJobsControllerTest extends TestCase
                 'warnings',
             ])
             ->assertJsonPath('success', true)
+            ->assertJsonPath('server_identifier', 'worker-01')
+            // Deprecated alias, kept so existing clients do not break.
             ->assertJsonPath('hostname', 'worker-01')
             ->assertJsonPath('running_jobs_count', 1);
     }

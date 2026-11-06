@@ -29,11 +29,14 @@ class ListRunningJobsCommand extends Command
 
     public function handle(): int
     {
-        if ($this->isWatchMode() && ! $this->option('json')) {
-            return $this->runInWatchMode(fn () => $this->renderOnce());
-        }
+        // A terminal shows live state; the response cache is for the JSON API.
+        return $this->manager->withoutCache(function () {
+            if ($this->isWatchMode() && ! $this->option('json')) {
+                return $this->runInWatchMode(fn () => $this->renderOnce());
+            }
 
-        return $this->renderOnce();
+            return $this->renderOnce();
+        });
     }
 
     protected function renderOnce(): int
@@ -52,10 +55,12 @@ class ListRunningJobsCommand extends Command
                 $showAll = true;
             }
 
-            // Check if Horizon is running
-            if (!$this->manager->isHorizonRunning()) {
-                $this->warn('⚠️  Horizon is not running. No jobs will be listed.');
-                return self::FAILURE;
+            // Reserved jobs live in Redis whether or not Horizon runs here, and
+            // after a crash (no Horizon anywhere) is exactly when the orphans
+            // need listing. So warn, but list them. No warning in JSON mode, so
+            // the output stays parseable.
+            if (! $asJson && ! $this->manager->isHorizonRunning()) {
+                $this->warn('⚠️  Horizon is not running (no master is registered in Redis). The jobs below are still reserved, but no worker is processing them.');
             }
 
             // Get queues
