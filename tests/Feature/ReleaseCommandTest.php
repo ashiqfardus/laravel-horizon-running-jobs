@@ -131,15 +131,59 @@ class ReleaseCommandTest extends TestCase
         $this->assertStringContainsString('Job ID "ghost-job" not found', $output);
     }
 
-    public function test_mutually_exclusive_targeting_flags_error(): void
+    public function test_job_id_cannot_be_combined_with_a_bulk_flag(): void
     {
         $this->bindReleaser(new FakeReleaser);
 
-        $exit = Artisan::call('horizon:release', ['--orphaned' => true, '--zombie' => true]);
-        $output = Artisan::output();
+        $exit = Artisan::call('horizon:release', ['job_id' => 'abc', '--orphaned' => true]);
 
         $this->assertSame(1, $exit);
-        $this->assertStringContainsString('mutually exclusive', $output);
+        $this->assertStringContainsString('cannot be combined', Artisan::output());
+    }
+
+    public function test_orphaned_and_zombie_flags_combine(): void
+    {
+        $fake = new FakeReleaser;
+        $this->bindReleaser($fake);
+
+        Artisan::call('horizon:release', ['--orphaned' => true, '--zombie' => true, '--dry-run' => true]);
+
+        $this->assertSame(['orphaned' => true, 'zombie' => true], $fake->capturedCriteria);
+    }
+
+    public function test_manual_release_warns_when_a_worker_may_still_be_running_the_job(): void
+    {
+        $fake = new FakeReleaser;
+        $fake->findResult = [['job_id' => 'abc', 'queue' => 'default', 'reason' => 'manual', 'payload' => 'p', 'safe' => false]];
+        $this->bindReleaser($fake);
+
+        Artisan::call('horizon:release', ['job_id' => 'abc', '--dry-run' => true]);
+
+        $this->assertStringContainsString('can make it run twice', Artisan::output());
+    }
+
+    public function test_manual_release_of_a_stuck_job_does_not_warn(): void
+    {
+        $fake = new FakeReleaser;
+        $fake->findResult = [['job_id' => 'abc', 'queue' => 'default', 'reason' => 'manual', 'payload' => 'p', 'safe' => true]];
+        $this->bindReleaser($fake);
+
+        Artisan::call('horizon:release', ['job_id' => 'abc', '--dry-run' => true]);
+
+        $this->assertStringNotContainsString('run twice', Artisan::output());
+    }
+
+    public function test_failed_supervisor_lookup_is_reported_and_nothing_is_released(): void
+    {
+        $fake = new FakeReleaser;
+        $fake->throwOnFind = new \Ashiqfardus\HorizonRunningJobs\Exceptions\LiveSupervisorsUnavailable;
+        $this->bindReleaser($fake);
+
+        $exit = Artisan::call('horizon:release', ['--orphaned' => true, '--force' => true]);
+
+        $this->assertSame(1, $exit);
+        $this->assertStringContainsString('Nothing was released', Artisan::output());
+        $this->assertSame(0, $fake->releaseCallCount);
     }
 
     private function bindReleaser(FakeReleaser $fake): void
@@ -154,11 +198,16 @@ class FakeReleaser extends JobReleaser
     public int $releaseReturns = 0;
     public ?array $capturedCriteria = null;
     public int $releaseCallCount = 0;
+    public ?\Throwable $throwOnFind = null;
 
     public function __construct() {}
 
     public function findReleasable(array $criteria): array
     {
+        if ($this->throwOnFind) {
+            throw $this->throwOnFind;
+        }
+
         $this->capturedCriteria = $criteria;
         return $this->findResult;
     }

@@ -6,7 +6,7 @@
     $supervisors = $payload['supervisors'];
     $stale = array_filter($supervisors, fn ($s) => ! empty($s['is_stale']));
 
-    $panelUrl = route('horizon-running-jobs.panel', ['panel' => 'supervisors-panel']);
+    $panelUrl = route('horizon-running-jobs.panel', ['panel' => 'supervisors-panel', 'poll' => (int) $poll]);
 @endphp
 
 <div
@@ -46,7 +46,7 @@
                             <th>PID</th>
                             <th>Queues</th>
                             <th>Procs</th>
-                            <th>Expires</th>
+                            <th>Heartbeat</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -59,7 +59,7 @@
                                     @php
                                         $badge = match (true) {
                                             ! empty($s['is_stale']) => 'fail',
-                                            ($s['status'] ?? '') === 'paused' => 'warn',
+                                            in_array($s['status'] ?? '', ['paused', 'unknown'], true) => 'warn',
                                             default => 'pass',
                                         };
                                         $label = ! empty($s['is_stale']) ? 'stale' : ($s['status'] ?? 'unknown');
@@ -70,10 +70,11 @@
                                 <td class="hrj-mono">{{ empty($s['queues']) ? '—' : implode(', ', $s['queues']) }}</td>
                                 <td class="hrj-mono">{{ $s['process_count'] ?? 0 }}</td>
                                 <td class="hrj-mono">
+                                    @php $heartbeatAge = ($s['seconds_since_heartbeat'] ?? 0) . 's ago'; @endphp
                                     @if(! empty($s['is_stale']))
-                                        <span class="hrj-badge hrj-badge--fail">OVERDUE {{ abs(($s['expires_at'] ?? 0) - time()) }}s</span>
+                                        <span class="hrj-badge hrj-badge--fail">{{ $heartbeatAge }}</span>
                                     @else
-                                        {{ ($s['seconds_until_expiry'] ?? 0) }}s
+                                        {{ $heartbeatAge }}
                                     @endif
                                 </td>
                             </tr>

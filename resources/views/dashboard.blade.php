@@ -59,25 +59,33 @@
                         }
                     },
                     refresh: async function () {
+                        // Never swap a panel under an open confirm dialog.
+                        const dialogOpen = Array.prototype.some.call(
+                            this.$root.querySelectorAll('.hrj-modal-overlay'),
+                            function (el) { return el.style.display !== 'none'; }
+                        );
+                        if (dialogOpen) return;
+
                         try {
                             const res = await fetch(url, {
                                 headers: { 'Accept': 'text/html', 'X-Requested-With': 'XMLHttpRequest' },
                             });
                             if (!res.ok) return;
                             const html = await res.text();
+                            // A dialog may have been opened while the request was in flight.
+                            const openedMeanwhile = Array.prototype.some.call(
+                                this.$root.querySelectorAll('.hrj-modal-overlay'),
+                                function (el) { return el.style.display !== 'none'; }
+                            );
+                            if (openedMeanwhile) return;
                             const wrapper = document.createElement('div');
                             wrapper.innerHTML = html.trim();
                             const fresh = wrapper.firstElementChild;
                             if (fresh && this.$root) {
-                                this.stop();
-                                // Alpine doesn't auto-init nodes inserted via replaceWith /
-                                // innerHTML, so the new panel would lose its polling +
-                                // release-button bindings. Use Alpine.initTree to walk
-                                // the new subtree and wire up the directives.
-                                this.$root.replaceWith(fresh);
-                                if (window.Alpine && typeof window.Alpine.initTree === 'function') {
-                                    window.Alpine.initTree(fresh);
-                                }
+                                // Keep this component (its timer and paused state) and
+                                // swap in the fresh contents only. Alpine initialises the
+                                // inserted nodes itself; they bind to this component.
+                                this.$root.replaceChildren.apply(this.$root, Array.prototype.slice.call(fresh.childNodes));
                             }
                         } catch (e) {
                             console.warn('[hrj] panel refresh failed', e);
@@ -134,6 +142,8 @@
                             }
                             showToast('Released job ' + jobId.substr(0, 8) + '…');
                             this.open = false;
+                            // Let Alpine hide the dialog first, or the refresh skips this panel.
+                            await this.$nextTick();
                             refreshAllPanels();
                         } catch (e) {
                             console.error('[hrj] release request failed', e);
@@ -150,14 +160,12 @@
                 return {
                     open: false,
                     busy: false,
-                    target: 'orphaned',
                     submit: async function () {
                         if (this.busy) return;
                         this.busy = true;
                         try {
-                            const payload = {};
-                            payload[this.target] = true;
-                            const [res, body] = await postRelease(url, payload);
+                            // Orphans and expired jobs, each only once past its timeout.
+                            const [res, body] = await postRelease(url, { orphaned: true, zombie: true });
                             if (!res.ok || body.success !== true) {
                                 showToast(body.message || ('Bulk release failed (HTTP ' + res.status + ')'), 'error');
                                 return;
@@ -165,6 +173,7 @@
                             const n = body.released || 0;
                             showToast(n === 0 ? 'No matching jobs to release.' : ('Released ' + n + ' job(s).'));
                             this.open = false;
+                            await this.$nextTick();
                             refreshAllPanels();
                         } catch (e) {
                             console.error('[hrj] bulk release request failed', e);

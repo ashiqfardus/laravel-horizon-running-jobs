@@ -96,11 +96,69 @@ class RunningJobsManagerTest extends TestCase
         $this->assertNull($manager->getRedisConnectionName());
     }
 
-    public function test_resolve_retry_after_defaults_to_90(): void
+    public function test_resolve_retry_after_defaults_to_90_when_no_queue_connection_matches(): void
     {
-        config()->set('queue.connections.redis.retry_after', null);
+        config()->set('queue.connections', ['sync' => ['driver' => 'sync']]);
 
         $this->assertSame(90, $this->manager()->resolveRetryAfter());
+        $this->assertTrue($this->manager()->reservationsExpire());
+    }
+
+    public function test_resolve_retry_after_is_60_when_the_matching_connection_has_no_retry_after_key(): void
+    {
+        // Laravel's and Horizon's Redis connectors both default to 60.
+        config()->set('queue.connections', ['redis' => ['driver' => 'redis', 'connection' => 'default']]);
+
+        $this->assertSame(60, $this->manager()->resolveRetryAfter());
+    }
+
+    public function test_null_retry_after_means_reservations_never_expire(): void
+    {
+        // Horizon keeps the null: jobs are reserved with score = reservation
+        // time and are never re-queued, so none of them is a zombie.
+        config()->set('queue.connections', ['redis' => ['driver' => 'redis', 'connection' => 'default', 'retry_after' => null]]);
+
+        $manager = $this->manager();
+        $now = time();
+
+        $this->assertFalse($manager->reservationsExpire());
+        $this->assertSame(0, $manager->resolveRetryAfter());
+        $this->assertSame('running', $manager->resolveJobStatus($now - 600, $now));
+        $this->assertSame(600, $manager->calculateRunningForSeconds($now - 600, $now));
+    }
+
+    public function test_resolve_retry_after_matches_wildcard_environment_keys_like_horizon(): void
+    {
+        $this->app['env'] = 'production-eu';
+        config()->set('horizon.use', 'default');
+        config()->set('queue.connections.long', ['driver' => 'redis', 'connection' => 'other', 'retry_after' => 3600]);
+        config()->set('horizon.environments', ['production*' => ['supervisor-1' => ['connection' => 'long']]]);
+
+        $this->assertSame(3600, $this->manager()->resolveRetryAfter());
+    }
+
+    public function test_horizon_env_overrides_the_app_environment(): void
+    {
+        config()->set('horizon.env', 'staging');
+        config()->set('queue.connections.long', ['driver' => 'redis', 'connection' => 'other', 'retry_after' => 1800]);
+        config()->set('horizon.environments', [
+            'testing' => ['supervisor-1' => ['connection' => 'redis']],
+            'staging' => ['staging-box' => ['connection' => 'long']],
+        ]);
+
+        $manager = $this->manager();
+
+        $this->assertSame(1800, $manager->resolveRetryAfter());
+        $this->assertSame('staging-box', $manager->getServerIdentifier());
+    }
+
+    public function test_server_identifier_uses_wildcard_environment_keys(): void
+    {
+        $this->app['env'] = 'production-eu';
+        config()->set('horizon.defaults', ['default-key' => []]);
+        config()->set('horizon.environments', ['production*' => ['eu-worker' => []]]);
+
+        $this->assertSame('eu-worker', $this->manager()->getServerIdentifier());
     }
 
     public function test_resolve_retry_after_reads_queue_connection_config(): void
@@ -117,6 +175,182 @@ class RunningJobsManagerTest extends TestCase
         $manager = $this->manager(['retry_after' => 60]);
 
         $this->assertSame(60, $manager->resolveRetryAfter());
+    }
+
+    public function test_resolve_retry_after_reads_the_queue_connection_not_the_horizon_redis_connection(): void
+    {
+        // horizon.use names a Redis connection (database.redis.default);
+        // retry_after lives on the queue connection (queue.connections.redis).
+        config()->set('horizon.use', 'default');
+        config()->set('queue.connections.redis', [
+            'driver' => 'redis',
+            'connection' => 'default',
+            'retry_after' => 1900,
+        ]);
+
+        $this->assertSame(1900, $this->manager()->resolveRetryAfter());
+    }
+
+    public function test_resolve_retry_after_prefers_the_queue_connection_horizon_supervisors_run_on(): void
+    {
+        config()->set('horizon.use', 'default');
+        config()->set('queue.connections.redis', ['driver' => 'redis', 'connection' => 'default', 'retry_after' => 90]);
+        config()->set('queue.connections.long', ['driver' => 'redis', 'connection' => 'default', 'retry_after' => 3600]);
+        config()->set('horizon.defaults', ['supervisor-1' => ['connection' => 'long', 'queue' => ['default']]]);
+        // An environment override that omits `connection` must not hide the default's.
+        config()->set('horizon.environments.testing', ['supervisor-1' => ['maxProcesses' => 3]]);
+
+        $this->assertSame(3600, $this->manager()->resolveRetryAfter());
+    }
+
+    public function test_resolve_retry_after_lets_the_environment_override_the_default_connection(): void
+    {
+        // Horizon provisions array_replace_recursive(defaults, environment).
+        config()->set('horizon.use', 'default');
+        config()->set('queue.connections.redis', ['driver' => 'redis', 'connection' => 'default', 'retry_after' => 90]);
+        config()->set('queue.connections.long', ['driver' => 'redis', 'connection' => 'default', 'retry_after' => 3600]);
+        config()->set('horizon.defaults', ['supervisor-1' => ['connection' => 'redis']]);
+        config()->set('horizon.environments.testing', ['supervisor-1' => ['connection' => 'long']]);
+
+        $this->assertSame(3600, $this->manager()->resolveRetryAfter());
+    }
+
+    public function test_effective_timeout_follows_the_worker_rules(): void
+    {
+        config()->set('horizon.environments.testing', [
+            'fast' => ['timeout' => 30],
+            'slow' => ['timeout' => 900],
+        ]);
+        $manager = $this->manager();
+
+        // The job's own timeout wins, including an explicit 0 (no timeout).
+        $this->assertSame(120, $manager->effectiveTimeout(['timeout' => 120], 'host-x1:fast'));
+        $this->assertSame(0, $manager->effectiveTimeout(['timeout' => 0], 'host-x1:fast'));
+
+        // Else the timeout of the supervisor running it.
+        $this->assertSame(30, $manager->effectiveTimeout(['timeout' => null], 'host-x1:fast'));
+
+        // Without a worker record (or an unknown key), the largest one.
+        $this->assertSame(900, $manager->effectiveTimeout([], null));
+        $this->assertSame(900, $manager->effectiveTimeout([], 'host-x1:retired-key'));
+    }
+
+    public function test_effective_timeout_is_zero_when_any_candidate_supervisor_has_none(): void
+    {
+        config()->set('horizon.environments.testing', ['a' => ['timeout' => 60], 'b' => ['timeout' => 0]]);
+
+        $this->assertSame(0, $this->manager()->effectiveTimeout([], null));
+        $this->assertSame(60, $this->manager()->effectiveTimeout([], 'host-x1:a'));
+    }
+
+    public function test_effective_timeout_defaults_to_horizons_60(): void
+    {
+        config()->set('horizon.environments.testing', ['a' => []]);
+        $this->assertSame(60, $this->manager()->effectiveTimeout([], 'host-x1:a'));
+
+        config()->set('horizon.environments', []);
+        $this->assertSame(60, $this->manager()->effectiveTimeout([], null));
+    }
+
+    public function test_parsed_row_says_when_release_becomes_safe(): void
+    {
+        $now = time();
+        $payload = json_encode(['uuid' => 'j', 'displayName' => 'X', 'timeout' => 60, 'data' => ['command' => 'x'], 'tags' => []]);
+        $manager = $this->manager(['retry_after' => 90]);
+
+        // Reserved 30s ago, no worker record: releasable once both past its
+        // timeout (+70s from start) and expired (score + 1), whichever is later.
+        $row = $manager->parseJobData($payload, $now + 60, 'default', 'h', $now, true);
+        $this->assertFalse($row['is_releasable']);
+        $this->assertSame($now + 61, $row['releasable_at']);
+
+        // With a worker record for this attempt, past timeout is enough.
+        $attempt1 = json_encode(['uuid' => 'j', 'timeout' => 60, 'attempts' => 1, 'data' => ['command' => 'x']]);
+        $recorded = ['supervisor' => 'gone-x1:h', 'started_at' => $now - 30, 'attempts' => 1, 'timeout' => 60];
+        $row = $manager->parseJobData($attempt1, $now + 60, 'default', 'h', $now, true, $recorded);
+        $this->assertSame('gone-x1:h', $row['supervisor']);
+        $this->assertSame($now - 30 + 70, $row['releasable_at']);
+
+        // Expired 30s ago (started 120s ago): zombie, past timeout + margin.
+        $row = $manager->parseJobData($payload, $now - 30, 'default', 'h', $now, true);
+        $this->assertSame('zombie', $row['status']);
+        $this->assertTrue($row['is_releasable']);
+
+        // Same, but the job has no timeout: never releasable.
+        $endless = json_encode(['uuid' => 'j', 'timeout' => 0, 'data' => ['command' => 'x']]);
+        $row = $manager->parseJobData($endless, $now - 30, 'default', 'h', $now, true);
+        $this->assertFalse($row['is_releasable']);
+        $this->assertNull($row['releasable_at']);
+    }
+
+    public function test_release_margin_is_configurable(): void
+    {
+        $now = time();
+        $payload = json_encode(['uuid' => 'j', 'timeout' => 60, 'attempts' => 1, 'data' => ['command' => 'x']]);
+        $record = ['supervisor' => 'gone-x1:h', 'started_at' => $now - 100, 'attempts' => 1, 'timeout' => 60];
+
+        $row = $this->manager(['release_margin_seconds' => 60])->parseJobData($payload, $now + 1000, 'default', 'h', $now, true, $record);
+
+        $this->assertSame($now - 100 + 60 + 60, $row['releasable_at']);
+        $this->assertSame(0, $this->manager(['release_margin_seconds' => -5])->releaseMarginSeconds());
+    }
+
+    public function test_live_supervisor_lookup_abstains_on_a_non_array_redis_reply(): void
+    {
+        // phpredis can answer false instead of throwing. Treating that as
+        // "no supervisor is alive" would flag every tagged job as orphaned.
+        $horizon = \Mockery::mock();
+        $horizon->shouldReceive('zrangebyscore')->andReturn(false);
+        $this->app->instance('redis', \Mockery::mock()->shouldReceive('connection')->with('horizon')->andReturn($horizon)->getMock());
+
+        $manager = $this->manager();
+
+        $this->assertNull($manager->getLiveSupervisorNames());
+        $this->assertFalse($manager->isJobOrphaned('web-01', $manager->getLiveSupervisorNames()));
+    }
+
+    public function test_resolve_retry_after_ignores_queue_connections_on_another_redis_connection(): void
+    {
+        config()->set('horizon.use', 'default');
+        config()->set('queue.connections.redis', ['driver' => 'redis', 'connection' => 'other', 'retry_after' => 600]);
+
+        $this->assertSame(90, $this->manager()->resolveRetryAfter());
+    }
+
+    public function test_without_cache_bypasses_the_cache_and_restores_the_setting(): void
+    {
+        $redis = \Mockery::mock();
+        $redis->shouldReceive('zcard')->andReturn(0);
+        $redis->shouldReceive('exists')->andReturn(false);
+        Redis::shouldReceive('connection')->andReturn($redis);
+
+        Cache::shouldReceive('get')->with('hrj_test:epoch', 0)->andReturn(0);
+        // Exactly one cached read: the call made after withoutCache() returns.
+        Cache::shouldReceive('remember')->once()->andReturnUsing(fn ($key, $ttl, $callback) => $callback());
+
+        $manager = $this->manager(['cache' => ['enabled' => true, 'ttl' => 10, 'prefix' => 'hrj_test']]);
+
+        $fresh = $manager->withoutCache(fn (RunningJobsManager $m) => $m->getRunningJobs(null, true, ['default']));
+        $cached = $manager->getRunningJobs(null, true, ['default']);
+
+        $this->assertSame([], $fresh['jobs']);
+        $this->assertSame([], $cached['jobs']);
+    }
+
+    public function test_without_cache_restores_the_setting_when_the_callback_throws(): void
+    {
+        $manager = $this->manager(['cache' => ['enabled' => true, 'prefix' => 'hrj_test']]);
+
+        try {
+            $manager->withoutCache(fn () => throw new \RuntimeException('boom'));
+            $this->fail('exception should propagate');
+        } catch (\RuntimeException) {
+        }
+
+        Cache::shouldReceive('get')->andReturn(0);
+        Cache::shouldReceive('remember')->once()->andReturn(['jobs' => []]);
+
+        $this->assertSame(['jobs' => []], $manager->getRunningJobs(null, true, ['default']));
     }
 
     public function test_calculate_running_for_adjusts_for_retry_after(): void

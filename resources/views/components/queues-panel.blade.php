@@ -4,7 +4,7 @@
 
     $payload = app(\Ashiqfardus\HorizonRunningJobs\QueueDepthInspector::class)->inspect();
 
-    $panelUrl = route('horizon-running-jobs.panel', ['panel' => 'queues-panel']);
+    $panelUrl = route('horizon-running-jobs.panel', ['panel' => 'queues-panel', 'poll' => (int) $poll]);
 @endphp
 
 <div

@@ -177,7 +177,7 @@ class RunningJobsManagerIntegrationTest extends IntegrationTestCase
     public function test_job_not_orphaned_when_tagged_supervisor_is_live(): void
     {
         // Register a live supervisor whose name suffix-matches the job's tag.
-        $this->redis()->zadd('supervisors', time() + 90, 'master-1:web-01');
+        $this->redis()->zadd('supervisors', time(), 'master-1:web-01');
 
         $this->seedReservedJob('default', $this->makePayload([
             'uuid' => 'healthy-job',
@@ -190,13 +190,13 @@ class RunningJobsManagerIntegrationTest extends IntegrationTestCase
         $this->assertFalse($result['jobs'][0]['is_orphaned']);
     }
 
-    public function test_job_marked_orphaned_when_supervisor_score_is_in_the_past(): void
+    public function test_job_marked_orphaned_when_supervisor_heartbeat_is_too_old(): void
     {
-        // Real-world parallel: a Horizon master has died and stopped refreshing
-        // the supervisor's ZSET registration. The member is still in the set
-        // but its expiry score is in the past — `zrangebyscore(time(), '+inf')`
-        // must filter it out so the job is correctly flagged as orphan.
-        $this->redis()->zadd('supervisors', time() - 30, 'master-1:web-01');
+        // Real-world parallel: a Horizon master has died, so nothing refreshes
+        // or reaps the supervisor's ZSET entry. The member is still in the set
+        // but its last heartbeat (the score) is 40s old, past Horizon's 29s
+        // window plus the 5s grace, so the job is correctly flagged as orphan.
+        $this->redis()->zadd('supervisors', time() - 40, 'master-1:web-01');
 
         $this->seedReservedJob('default', $this->makePayload([
             'uuid' => 'stale-supervisor-job',
@@ -213,13 +213,12 @@ class RunningJobsManagerIntegrationTest extends IntegrationTestCase
         );
     }
 
-    public function test_supervisor_within_grace_window_does_not_flap_orphan_status(): void
+    public function test_supervisor_that_missed_a_few_heartbeats_does_not_orphan_its_jobs(): void
     {
-        // Score is 2 seconds in the past — within the default 5s grace window.
-        // A healthy Horizon between heartbeats can land here briefly. The
-        // dashboard should keep treating the worker as live so the orphan
-        // panel doesn't flicker.
-        $this->redis()->zadd('supervisors', time() - 2, 'master-1:web-01');
+        // The score is the supervisor's last heartbeat. 10s of silence (busy
+        // loop, auto-scaling, slow Redis) is inside Horizon's own 29s window:
+        // the supervisor is alive and its jobs are still running.
+        $this->redis()->zadd('supervisors', time() - 10, 'master-1:web-01');
 
         $this->seedReservedJob('default', $this->makePayload([
             'uuid' => 'jitter-job',
@@ -232,11 +231,93 @@ class RunningJobsManagerIntegrationTest extends IntegrationTestCase
         $this->assertFalse($result['jobs'][0]['is_orphaned']);
     }
 
+    public function test_grace_window_is_added_on_top_of_horizons_window(): void
+    {
+        // 31s is past Horizon's 29s window but inside 29s + 5s grace.
+        $this->redis()->zadd('supervisors', time() - 31, 'master-1:web-01');
+
+        $this->seedReservedJob('default', $this->makePayload([
+            'uuid' => 'grace-job',
+            'tags' => ['server:web-01'],
+        ]));
+
+        $result = $this->manager()->getRunningJobs(null, true, ['default']);
+
+        $this->assertSame(0, $result['orphan_count']);
+    }
+
+    public function test_orphan_grace_comes_from_config(): void
+    {
+        $this->redis()->zadd('supervisors', time() - 31, 'master-1:web-01');
+        $this->seedReservedJob('default', $this->makePayload(['uuid' => 'grace-job', 'tags' => ['server:web-01']]));
+
+        $noGrace = $this->manager(config: ['supervisor_stale_grace_seconds' => 0])->getRunningJobs(null, true, ['default']);
+        $this->assertSame(1, $noGrace['orphan_count'], '31s is past 29s with no grace');
+
+        $this->redis()->zadd('supervisors', time() - 50, 'master-1:web-01');
+        $wideGrace = $this->manager(config: ['supervisor_stale_grace_seconds' => 30])->getRunningJobs(null, true, ['default']);
+        $this->assertSame(0, $wideGrace['orphan_count'], '50s is inside 29s + 30s grace');
+    }
+
+    public function test_silent_host_reaped_by_another_hosts_master_orphans_its_jobs(): void
+    {
+        // Pins the real limit of the grace window: once host B has been
+        // silent for 14s, host A's master deletes B's master and supervisor
+        // entries. Nothing is left to vouch for B, so its jobs are orphans.
+        $this->redis()->zadd('masters', time(), 'host-a-x1');
+        $this->redis()->hset('master:host-a-x1', 'supervisors', json_encode(['host-a-x1:host-a']));
+        $this->redis()->zadd('supervisors', time(), 'host-a-x1:host-a');
+
+        $this->seedReservedJob('default', $this->makePayload(['uuid' => 'a-job', 'tags' => ['server:host-a']]));
+        $this->seedReservedJob('default', $this->makePayload(['uuid' => 'b-job', 'tags' => ['server:host-b']]));
+
+        $jobs = collect($this->manager()->getRunningJobs(null, true, ['default'])['jobs'])->keyBy('job_id');
+
+        $this->assertFalse($jobs['a-job']['is_orphaned']);
+        $this->assertTrue($jobs['b-job']['is_orphaned']);
+    }
+
+    public function test_supervisor_reaped_by_horizon_but_still_managed_by_a_live_master_is_live(): void
+    {
+        // Horizon's master deletes a supervisor's entry after 14s of silence;
+        // the supervisor adds itself back on its next loop. In between, the
+        // supervisor is missing from the ZSET while its workers keep running.
+        $this->redis()->zadd('masters', time(), 'master-1');
+        $this->redis()->hset('master:master-1', 'supervisors', json_encode(['master-1:web-01']));
+
+        $this->seedReservedJob('default', $this->makePayload([
+            'uuid' => 'reaped-supervisor-job',
+            'tags' => ['server:web-01'],
+        ]));
+
+        $result = $this->manager()->getRunningJobs(null, true, ['default']);
+
+        $this->assertSame(0, $result['orphan_count']);
+        $this->assertFalse($result['jobs'][0]['is_orphaned']);
+    }
+
+    public function test_supervisor_listed_only_by_a_dead_master_is_not_live(): void
+    {
+        // The master stopped heartbeating 40s ago; its stale hash must not
+        // keep its supervisors alive.
+        $this->redis()->zadd('masters', time() - 40, 'master-1');
+        $this->redis()->hset('master:master-1', 'supervisors', json_encode(['master-1:web-01']));
+
+        $this->seedReservedJob('default', $this->makePayload([
+            'uuid' => 'dead-master-job',
+            'tags' => ['server:web-01'],
+        ]));
+
+        $result = $this->manager()->getRunningJobs(null, true, ['default']);
+
+        $this->assertSame(1, $result['orphan_count']);
+    }
+
     public function test_orphaned_only_filter_excludes_healthy_jobs(): void
     {
         // One healthy supervisor, one tagged job for it (healthy), one tagged
         // for a non-existent supervisor (orphaned).
-        $this->redis()->zadd('supervisors', time() + 90, 'master-1:web-01');
+        $this->redis()->zadd('supervisors', time(), 'master-1:web-01');
 
         $this->seedReservedJob('default', $this->makePayload([
             'uuid' => 'healthy',

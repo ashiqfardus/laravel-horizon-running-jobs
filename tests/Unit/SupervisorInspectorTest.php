@@ -32,8 +32,8 @@ class SupervisorInspectorTest extends TestCase
         $inspector = $this->buildInspector(
             supervisorAll: [$supervisor],
             masterAll: [$this->makeMaster('master-01', 'production', 9999, ['worker-01'])],
-            supervisorExpiries: ['worker-01' => $now + 60],
-            masterExpiries: ['master-01' => $now + 60]
+            supervisorHeartbeats: ['worker-01' => $now - 10],
+            masterHeartbeats: ['master-01' => $now - 2]
         );
 
         $result = $inspector->inspect();
@@ -46,16 +46,67 @@ class SupervisorInspectorTest extends TestCase
         $this->assertSame(1234, $row['pid']);
         $this->assertSame(['default', 'emails'], $row['queues']);
         $this->assertSame(3, $row['process_count']);
+        // Horizon stores the last heartbeat time as the score. 10s of silence
+        // is well inside Horizon's own 29s window, so this supervisor is live.
         $this->assertFalse($row['is_stale']);
-        $this->assertGreaterThan(0, $row['seconds_until_expiry']);
+        $this->assertSame($now - 10, $row['last_heartbeat_at']);
+        $this->assertEqualsWithDelta(10, $row['seconds_since_heartbeat'], 1);
+        $this->assertSame($now - 10 + SupervisorInspector::SUPERVISOR_ALIVE_SECONDS, $row['expires_at']);
+        $this->assertEqualsWithDelta(19, $row['seconds_until_expiry'], 1);
     }
 
-    public function test_inspect_marks_supervisor_stale_when_expiry_in_past(): void
+    public function test_supervisor_past_horizons_window_but_inside_grace_is_not_stale(): void
+    {
+        $now = time();
+        $inspector = $this->buildInspector(
+            supervisorAll: [],
+            supervisorHeartbeats: ['slow-worker' => $now - 31] // Horizon's 29s + 5s grace = 34s
+        );
+
+        $row = $inspector->inspect()['supervisors'][0];
+
+        $this->assertFalse($row['is_stale']);
+        $this->assertSame(0, $row['seconds_until_expiry']);
+    }
+
+    public function test_stale_grace_comes_from_config(): void
+    {
+        $now = time();
+        $heartbeats = ['slow-worker' => $now - 31, 'quiet-worker' => $now - 50];
+
+        config(['horizon-running-jobs.supervisor_stale_grace_seconds' => 0]);
+        $rows = collect($this->buildInspector(supervisorHeartbeats: $heartbeats)->inspect()['supervisors'])->keyBy('name');
+        $this->assertTrue($rows['slow-worker']['is_stale'], '31s is stale with no grace on top of 29s');
+
+        config(['horizon-running-jobs.supervisor_stale_grace_seconds' => 30]);
+        $rows = collect($this->buildInspector(supervisorHeartbeats: $heartbeats)->inspect()['supervisors'])->keyBy('name');
+        $this->assertFalse($rows['quiet-worker']['is_stale'], '50s is inside 29s + 30s grace');
+    }
+
+    public function test_master_uses_horizons_14_second_window(): void
+    {
+        $now = time();
+        $inspector = $this->buildInspector(
+            masterHeartbeats: [
+                'live-master' => $now - 10,
+                'dead-master' => $now - 25, // 14s + 5s grace = 19s
+            ]
+        );
+
+        $masters = collect($inspector->inspect()['masters'])->keyBy('name');
+
+        $this->assertFalse($masters['live-master']['is_stale']);
+        $this->assertTrue($masters['dead-master']['is_stale']);
+        $this->assertSame('stale', $masters['dead-master']['status']);
+        $this->assertSame($now - 25, $masters['dead-master']['last_heartbeat_at']);
+    }
+
+    public function test_inspect_marks_supervisor_stale_when_heartbeat_is_too_old(): void
     {
         $now = time();
         $inspector = $this->buildInspector(
             supervisorAll: [], // Horizon repo filters expired entries → empty
-            supervisorExpiries: ['dead-worker' => $now - 30] // expired 30s ago
+            supervisorHeartbeats: ['dead-worker' => $now - 40] // silent for 40s
         );
 
         $result = $inspector->inspect();
@@ -66,6 +117,7 @@ class SupervisorInspectorTest extends TestCase
         $this->assertSame('stale', $row['status']);
         $this->assertTrue($row['is_stale']);
         $this->assertSame(0, $row['seconds_until_expiry']);
+        $this->assertEqualsWithDelta(40, $row['seconds_since_heartbeat'], 1);
         $this->assertNull($row['pid']);
         $this->assertSame([], $row['queues']);
         $this->assertSame(0, $row['process_count']);
@@ -78,7 +130,7 @@ class SupervisorInspectorTest extends TestCase
 
         $inspector = $this->buildInspector(
             masterAll: [$master],
-            masterExpiries: ['master-01' => $now + 45]
+            masterHeartbeats: ['master-01' => $now - 3]
         );
 
         $result = $inspector->inspect();
@@ -108,8 +160,8 @@ class SupervisorInspectorTest extends TestCase
     private function buildInspector(
         array $supervisorAll = [],
         array $masterAll = [],
-        array $supervisorExpiries = [],
-        array $masterExpiries = []
+        array $supervisorHeartbeats = [],
+        array $masterHeartbeats = []
     ): SupervisorInspector {
         $supervisors = \Mockery::mock(SupervisorRepository::class);
         $supervisors->shouldReceive('all')->andReturn($supervisorAll);
@@ -120,10 +172,10 @@ class SupervisorInspectorTest extends TestCase
         $connection = \Mockery::mock();
         $connection->shouldReceive('zrange')
             ->with('supervisors', 0, -1, ['WITHSCORES' => true])
-            ->andReturn($supervisorExpiries);
+            ->andReturn($supervisorHeartbeats);
         $connection->shouldReceive('zrange')
             ->with('masters', 0, -1, ['WITHSCORES' => true])
-            ->andReturn($masterExpiries);
+            ->andReturn($masterHeartbeats);
 
         $redis = \Mockery::mock(RedisFactory::class);
         $redis->shouldReceive('connection')->with('horizon')->andReturn($connection);

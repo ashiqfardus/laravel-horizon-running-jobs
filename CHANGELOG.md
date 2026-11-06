@@ -4,6 +4,57 @@ All notable changes to `horizon-running-jobs` will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Live supervisors are no longer flagged stale, and their running jobs are no longer flagged orphaned.** Horizon stores the time of each supervisor's last heartbeat in Redis. The package read that value as an expiry time, so a supervisor was treated as dead 5 seconds after its last heartbeat instead of the 29 seconds Horizon allows (14 for a master). A short pause in heartbeats marked every job of that supervisor as orphaned and offered it for release while it was still running. The package now uses Horizon's own windows, with `supervisor_stale_grace_seconds` added on top, and a supervisor that a live master still manages also counts as alive. If you raised that setting to 30 as a workaround, you can set it back to 5.
+- **Jobs dispatched from one server and run on another are no longer reported as orphaned.** The package matched jobs to servers through their `server:` tag, which Horizon writes at dispatch time, so with web nodes dispatching and worker nodes processing, every job looked orphaned. Workers now record which supervisor runs each job (see `track_workers` under Added).
+- **Hosts that share a supervisor key no longer hide each other's dead workers.** With Horizon's stock `supervisor-1` key on every host, a live host kept the jobs of a dead one from being reported as orphaned. Orphan detection now compares the exact supervisor name from the worker record.
+- **Release never runs a job twice.**
+  - Orphans and expired jobs are offered for release only once they have run past the timeout their worker enforces, plus `release_margin_seconds`. Before, jobs still finishing during `horizon:terminate` were offered for release. An orphan without a worker record is released only once its reservation has also expired.
+  - A job that finished or was picked up again between "find" and "release" was pushed back to the pending list anyway. Release is now a single Redis script that pushes the job only if it was still reserved.
+  - If the live supervisors could not be read from Redis, orphan release treated every tagged job as orphaned. It now stops and releases nothing.
+  - The dashboard's per-row Release button is re-checked on the server, so a stale page cannot release a job that a worker has picked up again.
+- **The dashboard's "release all" button released zombies.** It always sent `orphaned=true`, so on a page with only zombies it released nothing. It now releases every orphan and expired job that is past its timeout, and says how many.
+- Released jobs now wake workers that wait with `block_for`, the same way Laravel's own scripts do.
+- **`retry_after` auto-detection.** The lookup used `horizon.use` (a Redis connection name) as a queue connection name, found nothing on most apps and fell back to 90. With a longer `retry_after`, running jobs showed a duration of 0s and long-running warnings fired late. The value now comes from the queue connection your Horizon supervisors run on, with the environment's options overriding the defaults as in Horizon. A connection without a `retry_after` key now counts as 60, the default Laravel and Horizon use.
+- **`retry_after => null`.** With reservations that never expire, every running job was reported as a zombie one second after it started, and `horizon:release --zombie` released them all. No job is reported as a zombie in that setup now.
+- Wildcard environment keys in `horizon.php` (`'production*' => [...]`) and `horizon.env` are honoured when detecting the server identifier, `retry_after` and supervisor timeouts.
+- **Dashboard panels kept refreshing only once.** Each refresh replaced the panel with a fragment that had no polling component, so after the first refresh every panel froze and its pause button disappeared. Panels now keep polling, keep their paused state, and never refresh under an open confirm dialog.
+- `horizon:running-jobs` refused to list anything when Horizon was not running on the current host, which hid the orphans right after a crash and on servers that only dispatch. It now prints a warning and lists the jobs (no warning with `--json`).
+- **Short jobs now appear on the dashboard.** The panels poll every 3 to 5 seconds but were served from the 10 second response cache, so a job shorter than the cache TTL could run without ever being shown. The dashboard panels, `horizon:running-jobs` and `horizon:diagnose` now always read live data. The running-jobs API is still cached. If you published `running-jobs-table.blade.php` earlier, its auto-refresh reads live data too; re-publish it to make the first render live as well.
+- `TracksServer`: reading `supervisor_id` on a job that never called `initializeServerTracking()` no longer throws. The property is now nullable and the constructor call is optional.
+- `horizon:release --orphaned` and the dashboard's bulk release now include orphans identified only through the `supervisor_id` property, matching the orphan count shown.
+- A supervisor whose entry Horizon no longer lists, but which is not stale yet, is shown with a warning badge instead of a green one.
+
+### Added
+
+- PHP 8.5 support, and PHPUnit 13 in the development dependencies. The test suite now also runs with the predis client.
+- `release_margin_seconds` config option (default `10`): seconds past a job's timeout before it is offered for release.
+- `track_workers` config option (default `true`). Horizon workers record which supervisor runs each job and when it started, in a short Redis key removed when the job ends. Restart Horizon (`php artisan horizon:terminate`) after updating so workers start writing them.
+- `supervisor`, `is_releasable` and `releasable_at` on every job in `GET /api/horizon/running-jobs` and `horizon:running-jobs --json`.
+- `horizon:release --orphaned --zombie`, and `orphaned` + `zombie` together on the dashboard's release endpoint.
+- `TracksServer::serverTags()`. A job that defines its own `tags()` replaces the trait's and loses the `server:` tag; merge `serverTags()` into your list to keep it.
+- `RunningJobs::withoutCache(fn ($manager) => ...)` for a live read that skips the response cache.
+- `server_identifier` in the `GET /api/horizon/running-jobs` response, and a `?server_identifier=` query parameter.
+- `last_heartbeat_at` and `seconds_since_heartbeat` on every supervisor and master row (`GET /api/horizon/supervisors`, `horizon:supervisors --json`).
+
+### Changed
+
+- `horizon:release --orphaned` / `--zombie` and the dashboard only release jobs that have run past their timeout. A job with no timeout is no longer released in bulk; release it by UUID. `horizon:release <uuid>` still releases any reserved job and now warns when a worker may still be running it.
+- In distributed mode each instance lists the jobs its own workers run. Before, it listed the jobs it had dispatched. This relies on `server_identifier` matching the instance's supervisor key, as the config already requires; if yours differs, local views (without `--all` / `?all=true`) will not show those jobs.
+- For subclasses: `RunningJobsManager::parseJobData()` and `isJobOrphaned()` take a new optional last parameter, so overrides must add it; `JobReleaser::matchReason()` has a new signature and `serverTagFromPayload()` was removed.
+- `start_time` / `running_for_seconds` come from the worker's record of when the job started, when there is one.
+- The supervisors panel and `horizon:supervisors` show a `Heartbeat` column ("3s ago") in place of `Expires`, which always read 0s.
+- `expires_at` and `seconds_until_expiry` on supervisor and master rows now describe when Horizon itself stops treating the process as alive (last heartbeat + 29s, or + 14s for a master). Before, `expires_at` was the last heartbeat time and `seconds_until_expiry` was always 0.
+- The release endpoint answers `409` when a job given by `job_id` may still be running, `503` when the live supervisors cannot be read, and `422` when `job_id` is combined with `orphaned` / `zombie` (the message changed).
+- `TracksServer::$supervisor_id` is now `?string` with a `null` default. Restart Horizon right after deploying, as usual: a worker still running the old code cannot process a job dispatched by the new code if the job uses the trait without `SerializesModels`. If a job class declares its own `$supervisor_id` next to the trait, change the declaration to `public ?string $supervisor_id = null;`.
+- `?hostname=` on `GET /api/horizon/running-jobs` is validated like queue names (alphanumeric, underscore, colon, dot, dash; up to 100 characters) and returns 422 otherwise.
+- If you published the package views, re-publish them to get the `Heartbeat` column and the new release behaviour. Older copies keep working: their Release buttons are re-checked on the server.
+
+### Deprecated
+
+- `hostname` in the `GET /api/horizon/running-jobs` response, and the `?hostname=` query parameter. The field holds the server identifier (with Horizon's stock config, the supervisor key), not the machine's host name. Use `server_identifier`.
+
 ## [2.1.1] - 2026-04-26
 
 ### Fixed

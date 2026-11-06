@@ -34,8 +34,10 @@ class ListSupervisorsCommandTest extends TestCase
         $output = Artisan::output();
 
         $this->assertStringContainsString('⚠ stale', $output);
-        $this->assertStringContainsString('OVERDUE', $output);
-        $this->assertStringContainsString('1 supervisor(s) past their expiry', $output);
+        $this->assertStringContainsString('Heartbeat', $output);
+        $this->assertStringContainsString('59s ago', $output);
+        $this->assertStringNotContainsString('Expires', $output);
+        $this->assertStringContainsString('1 supervisor(s) stopped heartbeating', $output);
     }
 
     public function test_masters_flag_renders_master_table(): void
@@ -43,7 +45,7 @@ class ListSupervisorsCommandTest extends TestCase
         $this->bindInspector($this->payload(
             supervisors: [],
             masters: [
-                ['name' => 'master-A', 'status' => 'running', 'environment' => 'production', 'pid' => 9999, 'supervisor_count' => 2, 'expires_at' => time() + 30, 'seconds_until_expiry' => 30, 'is_stale' => false],
+                ['name' => 'master-A', 'status' => 'running', 'environment' => 'production', 'pid' => 9999, 'supervisor_count' => 2, 'last_heartbeat_at' => time() - 1, 'seconds_since_heartbeat' => 1, 'expires_at' => time() + 13, 'seconds_until_expiry' => 13, 'is_stale' => false],
             ]
         ));
 
@@ -53,6 +55,7 @@ class ListSupervisorsCommandTest extends TestCase
         $this->assertStringContainsString('Masters:', $output);
         $this->assertStringContainsString('master-A', $output);
         $this->assertStringContainsString('production', $output);
+        $this->assertStringContainsString('1s ago', $output);
     }
 
     public function test_json_flag_emits_inspector_payload(): void
@@ -179,8 +182,10 @@ class ListSupervisorsCommandTest extends TestCase
             'queues' => $queues,
             'process_count' => $procs,
             'processes' => [],
-            'expires_at' => $isStale ? $now - 30 : $now + 60,
-            'seconds_until_expiry' => $isStale ? 0 : 60,
+            'last_heartbeat_at' => $isStale ? $now - 59 : $now - 1,
+            'seconds_since_heartbeat' => $isStale ? 59 : 1,
+            'expires_at' => $isStale ? $now - 30 : $now + 28,
+            'seconds_until_expiry' => $isStale ? 0 : 28,
             'is_stale' => $isStale,
         ];
     }

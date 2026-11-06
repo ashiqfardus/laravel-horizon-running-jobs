@@ -17,7 +17,7 @@
         'fail' => 'Horizon is not healthy — immediate attention needed',
     };
 
-    $panelUrl = route('horizon-running-jobs.panel', ['panel' => 'diagnose-banner']);
+    $panelUrl = route('horizon-running-jobs.panel', ['panel' => 'diagnose-banner', 'poll' => (int) $poll]);
 @endphp
 
 <div
