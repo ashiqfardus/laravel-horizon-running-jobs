@@ -4,6 +4,8 @@ All notable changes to `horizon-running-jobs` will be documented in this file.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-06
+
 ### Fixed
 
 - **Live supervisors are no longer flagged stale, and their running jobs are no longer flagged orphaned.** Horizon stores the time of each supervisor's last heartbeat in Redis. The package read that value as an expiry time, so a supervisor was treated as dead 5 seconds after its last heartbeat instead of the 29 seconds Horizon allows (14 for a master). A short pause in heartbeats marked every job of that supervisor as orphaned and offered it for release while it was still running. The package now uses Horizon's own windows, with `supervisor_stale_grace_seconds` added on top, and a supervisor that a live master still manages also counts as alive. If you raised that setting to 30 as a workaround, you can set it back to 5.
